@@ -176,6 +176,13 @@ struct BundleAdjustmentOptions : public BundleAdjustmentBackendOptions {
   // Whether to print a final summary.
   bool print_summary = true;
 
+  // Path of a file every solve appends one line of JSON to: the backend,
+  // the call site, the problem size, the iterations, the costs, the
+  // termination, the threads and the time. Empty for none.
+  std::string report_path;
+  // The call site named in the record: "local", "global", "pose".
+  std::string report_site;
+
   // Solver backend to use for bundle adjustment.
   BundleAdjustmentBackend backend = BundleAdjustmentBackend::CERES;
 
@@ -185,6 +192,24 @@ struct BundleAdjustmentOptions : public BundleAdjustmentBackendOptions {
 
   bool Check() const;
 };
+
+// The loss of a solve for reports: its kind and, for a robust kind, the
+// scale in pixels and a weight other than one, e.g. "TRIVIAL" or
+// "CAUCHY (scale 1 px)".
+std::string DescribeLossFunction(const BundleAdjustmentOptions& options);
+
+// The string as a JSON string literal, quotes and backslashes escaped.
+std::string JsonQuoted(const std::string& text);
+
+// The value as a JSON number at full precision, or null where it is
+// not finite: JSON has no infinity or NaN.
+std::string JsonNumber(double value);
+
+// Append one line to the solve record file at `path` (see
+// BundleAdjustmentOptions::report_path); a failure to open it is logged
+// and otherwise ignored.
+void AppendBundleAdjustmentRecord(const std::string& path,
+                                  const std::string& json_line);
 
 // Abstract base class for bundle adjustment, independent of solver backend.
 class BundleAdjuster {

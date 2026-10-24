@@ -175,6 +175,10 @@ void BindIncrementalPipeline(py::module& m) {
                      &Opts::ba_global_backend,
                      "Bundle adjustment solver backend for global bundle "
                      "adjustment.")
+      .def_readwrite("ba_report_path",
+                     &Opts::ba_report_path,
+                     "Path of a file every bundle adjustment appends one "
+                     "line of JSON to; empty for none.")
       .def_readwrite("use_prior_position",
                      &Opts::use_prior_position,
                      "Whether to use priors on the camera positions.")
@@ -385,6 +389,10 @@ void BindIncrementalMapperOptions(py::module& m) {
                      &Opts::abs_pose_refine_extra_params,
                      "Whether to estimate the extra parameters in absolute "
                      "pose estimation.")
+      .def_readwrite("ba_report_path",
+                     &Opts::ba_report_path,
+                     "File every registration's pose refinement appends its "
+                     "record to. Empty for none.")
       .def_readwrite("ba_local_num_images",
                      &Opts::ba_local_num_images,
                      "Number of images to optimize in local bundle adjustment.")

@@ -624,6 +624,8 @@ void OptionManager::AddBundleAdjustmentOptions() {
                        BundleAdjustmentBackendToString,
                        BundleAdjustmentBackendFromString,
                        EnumHelpText(BundleAdjustmentBackendStrings()));
+  AddDefaultOption("BundleAdjustment.report_path",
+                   &bundle_adjustment->report_path);
 
   // Ceres-specific options
   AddDefaultOption(
@@ -764,6 +766,7 @@ void OptionManager::AddMapperOptions() {
                        BundleAdjustmentBackendToString,
                        BundleAdjustmentBackendFromString,
                        EnumHelpText(BundleAdjustmentBackendStrings()));
+  AddDefaultOption("Mapper.ba_report_path", &mapper->ba_report_path);
   AddDefaultOption("Mapper.ba_min_num_residuals_for_cpu_multi_threading",
                    &mapper->ba_min_num_residuals_for_cpu_multi_threading);
   AddDefaultOption("Mapper.snapshot_path", &mapper->snapshot_path);

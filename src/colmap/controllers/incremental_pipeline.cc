@@ -154,6 +154,9 @@ IncrementalMapper::Options IncrementalPipelineOptions::Mapper() const {
   options.use_robust_loss_on_prior_position = use_robust_loss_on_prior_position;
   options.prior_position_loss_scale = prior_position_loss_scale;
   options.random_seed = random_seed;
+  // The structure-less registration's pose refinement is a bundle
+  // adjustment: it joins the record.
+  options.ba_report_path = ba_report_path;
   return options;
 }
 
@@ -207,6 +210,8 @@ BundleAdjustmentOptions IncrementalPipelineOptions::LocalBundleAdjustment()
     }
     options.caspar->gpu_index = ba_gpu_index;
   }
+  options.report_path = ba_report_path;
+  options.report_site = "local";
   return options;
 }
 
@@ -254,6 +259,8 @@ BundleAdjustmentOptions IncrementalPipelineOptions::GlobalBundleAdjustment()
     }
     options.caspar->gpu_index = ba_gpu_index;
   }
+  options.report_path = ba_report_path;
+  options.report_site = "global";
   return options;
 }
 

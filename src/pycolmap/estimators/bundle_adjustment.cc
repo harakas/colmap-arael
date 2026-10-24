@@ -347,6 +347,10 @@ void BindBundleAdjuster(py::module& m) {
           .def_readwrite("print_summary",
                          &BAOpts::print_summary,
                          "Whether to print a final summary.")
+          .def_readwrite("report_path",
+                         &BAOpts::report_path,
+                         "Path of a file every solve appends one line of "
+                         "JSON to; empty for none.")
           .def_readwrite("backend",
                          &BAOpts::backend,
                          "Solver backend to use for bundle adjustment.")

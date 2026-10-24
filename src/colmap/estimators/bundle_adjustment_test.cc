@@ -324,6 +324,16 @@ TEST(BundleAdjustmentSummary, BriefReport) {
   EXPECT_NE(report.find("42"), std::string::npos);
 }
 
+TEST(JsonNumber, FiniteAtFullPrecisionNonFiniteAsNull) {
+  EXPECT_EQ(JsonNumber(1.5), "1.5");
+  EXPECT_EQ(JsonNumber(-2), "-2");
+  EXPECT_EQ(std::stod(JsonNumber(0.1)), 0.1);
+  EXPECT_EQ(std::stod(JsonNumber(1.0 / 3.0)), 1.0 / 3.0);
+  EXPECT_EQ(JsonNumber(std::numeric_limits<double>::infinity()), "null");
+  EXPECT_EQ(JsonNumber(-std::numeric_limits<double>::infinity()), "null");
+  EXPECT_EQ(JsonNumber(std::numeric_limits<double>::quiet_NaN()), "null");
+}
+
 // Parameterized test for generic BundleAdjuster interface across backends.
 class BundleAdjusterBackendTest
     : public ::testing::TestWithParam<BundleAdjustmentBackend> {

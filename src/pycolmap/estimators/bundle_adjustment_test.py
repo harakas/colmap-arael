@@ -186,6 +186,13 @@ def test_ba_options_print_summary_readwrite() -> None:
     assert options.print_summary == (not original)
 
 
+def test_ba_options_report_path_readwrite() -> None:
+    options = pycolmap.BundleAdjustmentOptions()
+    assert options.report_path == ""
+    options.report_path = "/tmp/ba_report.jsonl"
+    assert options.report_path == "/tmp/ba_report.jsonl"
+
+
 def test_ba_options_backend_readwrite() -> None:
     options = pycolmap.BundleAdjustmentOptions()
     options.backend = pycolmap.BundleAdjustmentBackend.CERES

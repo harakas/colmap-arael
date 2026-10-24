@@ -4,7 +4,11 @@
 
 #include "colmap/estimators/bundle_adjustment_caspar.h"
 #include "colmap/estimators/bundle_adjustment_ceres.h"
-#include "colmap/util/hash_containers.h"
+
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 
 namespace colmap {
 
@@ -19,6 +23,52 @@ std::string BundleAdjustmentSummary::BriefReport() const {
          std::string(
              BundleAdjustmentTerminationTypeToString(termination_type)) +
          ", num_residuals=" + std::to_string(num_residuals);
+}
+
+std::string JsonQuoted(const std::string& text) {
+  std::string quoted = "\"";
+  for (const char c : text) {
+    if (c == '"' || c == '\\') {
+      quoted += '\\';
+    }
+    quoted += c;
+  }
+  quoted += '"';
+  return quoted;
+}
+
+std::string JsonNumber(const double value) {
+  if (!std::isfinite(value)) {
+    return "null";
+  }
+  std::ostringstream text;
+  text << std::setprecision(17) << value;
+  return text.str();
+}
+
+void AppendBundleAdjustmentRecord(const std::string& path,
+                                  const std::string& json_line) {
+  std::ofstream file(path, std::ios::app);
+  if (!file) {
+    LOG(WARNING) << "Cannot append the bundle adjustment record to " << path;
+    return;
+  }
+  file << json_line << "\n";
+}
+
+std::string DescribeLossFunction(const BundleAdjustmentOptions& options) {
+  const CeresBundleAdjustmentOptions& ceres =
+      *THROW_CHECK_NOTNULL(options.ceres);
+  std::ostringstream description;
+  description << CeresLossFunctionTypeToString(ceres.loss_function_type);
+  if (ceres.loss_function_type != CeresLossFunctionType::TRIVIAL) {
+    description << " (scale " << ceres.loss_function_scale << " px";
+    if (ceres.loss_function_weight != 1.0) {
+      description << ", weight " << ceres.loss_function_weight;
+    }
+    description << ")";
+  }
+  return description.str();
 }
 
 ////////////////////////////////////////////////////////////////////////////////

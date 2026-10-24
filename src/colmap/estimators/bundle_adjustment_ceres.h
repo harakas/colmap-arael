@@ -106,4 +106,13 @@ std::unique_ptr<CeresBundleAdjuster> CreatePosePriorCeresBundleAdjuster(
 void PrintSolverSummary(const ceres::Solver::Summary& summary,
                         const std::string& header);
 
+// One line of JSON for BundleAdjustmentOptions::report_path: the call
+// site, the kind of problem ("bundle adjustment"), the Ceres summary's
+// counts, costs, termination, solver, threads and time, and the loss
+// (DescribeLossFunction). A non-finite value is written as null.
+std::string CeresSolveRecord(const ceres::Solver::Summary& summary,
+                             const std::string& site,
+                             const std::string& kind,
+                             const std::string& loss);
+
 }  // namespace colmap

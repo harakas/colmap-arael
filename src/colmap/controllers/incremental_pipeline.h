@@ -122,6 +122,10 @@ struct IncrementalPipelineOptions {
   // Bundle adjustment solver backend for global bundle adjustment.
   BundleAdjustmentBackend ba_global_backend = BundleAdjustmentBackend::CERES;
 
+  // Path of a file every bundle adjustment appends one line of JSON to
+  // (BundleAdjustmentOptions::report_path). Empty for none.
+  std::string ba_report_path;
+
   // Whether to use priors on the camera positions.
   bool use_prior_position = false;
 

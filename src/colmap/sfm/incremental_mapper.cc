@@ -750,6 +750,8 @@ bool IncrementalMapper::RegisterNextStructureLessImage(const Options& options,
         ceres::LoggingType::SILENT;
   }
   abs_pose_refinement_options.print_summary = false;
+  abs_pose_refinement_options.report_path = options.ba_report_path;
+  abs_pose_refinement_options.report_site = "pose";
   if (reg_stats_.num_reg_images_per_camera[image.CameraId()] > 0) {
     // Camera already refined from another image with the same camera.
     if (camera.HasBogusParams(options.min_focal_length_ratio,

@@ -9,6 +9,8 @@
 #include "colmap/util/cuda.h"
 #include "colmap/util/testing.h"
 
+#include <fstream>
+
 #include <gtest/gtest.h>
 
 // Due to pose normalization operations, constant variables may not be perfectly
@@ -1212,6 +1214,62 @@ TEST(PosePriorBundleAdjuster, OptimizationRobustToOutliers) {
                                  /*max_proj_center_error=*/0.1,
                                  /*max_scale_error=*/std::nullopt,
                                  /*num_obs_tolerance=*/0.02));
+}
+
+TEST(CeresSolveRecord, WritesNonFiniteAsNull) {
+  ceres::Solver::Summary summary;
+  summary.initial_cost = std::numeric_limits<double>::quiet_NaN();
+  summary.final_cost = 2.5;
+  summary.total_time_in_seconds = std::numeric_limits<double>::infinity();
+  const std::string line =
+      CeresSolveRecord(summary, "local", "bundle adjustment", "TRIVIAL");
+  EXPECT_NE(line.find("\"initial_cost\": null"), std::string::npos);
+  EXPECT_NE(line.find("\"final_cost\": 2.5"), std::string::npos);
+  EXPECT_NE(line.find("\"time\": null"), std::string::npos);
+  EXPECT_EQ(line.find("nan"), std::string::npos);
+  EXPECT_EQ(line.find("inf"), std::string::npos);
+}
+
+TEST(DefaultCeresBundleAdjuster, SolveRecord) {
+  Reconstruction reconstruction;
+  SyntheticDatasetOptions synthetic_dataset_options;
+  synthetic_dataset_options.num_rigs = 2;
+  synthetic_dataset_options.num_cameras_per_rig = 1;
+  synthetic_dataset_options.num_frames_per_rig = 1;
+  synthetic_dataset_options.num_points3D = 50;
+  SynthesizeDataset(synthetic_dataset_options, &reconstruction);
+
+  BundleAdjustmentConfig config;
+  config.AddImage(1);
+  config.AddImage(2);
+  config.FixGauge(BundleAdjustmentGauge::TWO_CAMS_FROM_WORLD);
+
+  BundleAdjustmentOptions options;
+  options.print_summary = false;
+  options.report_path = (CreateTestDir() / "ba_report.jsonl").string();
+  options.report_site = "global";
+  options.ceres->loss_function_type = CeresLossFunctionType::CAUCHY;
+  options.ceres->loss_function_scale = 2.0;
+  for (int i = 0; i < 2; ++i) {
+    const auto summary =
+        CreateDefaultCeresBundleAdjuster(options, config, reconstruction)
+            ->Solve();
+    ASSERT_NE(summary->termination_type,
+              BundleAdjustmentTerminationType::FAILURE);
+  }
+
+  std::ifstream file(options.report_path);
+  std::vector<std::string> lines;
+  for (std::string line; std::getline(file, line);) {
+    lines.push_back(line);
+  }
+  ASSERT_EQ(lines.size(), 2);
+  EXPECT_NE(lines[0].find("\"backend\": \"ceres\""), std::string::npos);
+  EXPECT_NE(lines[0].find("\"site\": \"global\""), std::string::npos);
+  EXPECT_NE(lines[0].find("\"loss\": \"CAUCHY (scale 2 px)\""),
+            std::string::npos);
+  EXPECT_NE(lines[0].find("\"iterations\": "), std::string::npos);
+  EXPECT_NE(lines[0].find("\"time\": "), std::string::npos);
 }
 
 }  // namespace

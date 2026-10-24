@@ -15,8 +15,34 @@
 
 #include <cmath>
 #include <iomanip>
+#include <sstream>
 
 namespace colmap {
+
+std::string CeresSolveRecord(const ceres::Solver::Summary& summary,
+                             const std::string& site,
+                             const std::string& kind,
+                             const std::string& loss) {
+  std::ostringstream line;
+  line << std::setprecision(17);
+  line << "{\"backend\": \"ceres\", \"kind\": " << JsonQuoted(kind)
+       << ", \"site\": " << JsonQuoted(site)
+       << ", \"residuals\": " << summary.num_residuals_reduced
+       << ", \"parameters\": " << summary.num_effective_parameters_reduced
+       << ", \"iterations\": "
+       << summary.num_successful_steps + summary.num_unsuccessful_steps
+       << ", \"accepted\": " << summary.num_successful_steps
+       << ", \"initial_cost\": " << JsonNumber(summary.initial_cost)
+       << ", \"final_cost\": " << JsonNumber(summary.final_cost)
+       << ", \"termination\": "
+       << JsonQuoted(ceres::TerminationTypeToString(summary.termination_type))
+       << ", \"loss\": " << JsonQuoted(loss) << ", \"solver\": "
+       << JsonQuoted(
+              ceres::LinearSolverTypeToString(summary.linear_solver_type_used))
+       << ", \"threads\": " << summary.num_threads_used
+       << ", \"time\": " << JsonNumber(summary.total_time_in_seconds) << "}";
+  return line.str();
+}
 
 namespace {
 
@@ -655,6 +681,14 @@ class DefaultBundleAdjuster : public CeresBundleAdjuster {
     if (options_.print_summary || VLOG_IS_ON(1)) {
       PrintSolverSummary(ceres_summary, "Bundle adjustment report");
     }
+    if (!options_.report_path.empty()) {
+      AppendBundleAdjustmentRecord(
+          options_.report_path,
+          CeresSolveRecord(ceres_summary,
+                           options_.report_site,
+                           "bundle adjustment",
+                           DescribeLossFunction(options_)));
+    }
 
     return CreateSummaryAndLogFailure(std::move(ceres_summary),
                                       "Bundle adjustment");
@@ -955,6 +989,14 @@ class PosePriorBundleAdjuster : public CeresBundleAdjuster {
 
     if (options_.print_summary || VLOG_IS_ON(1)) {
       PrintSolverSummary(ceres_summary, "Pose Prior Bundle adjustment report");
+    }
+    if (!options_.report_path.empty()) {
+      AppendBundleAdjustmentRecord(
+          options_.report_path,
+          CeresSolveRecord(ceres_summary,
+                           options_.report_site,
+                           "pose prior bundle adjustment",
+                           DescribeLossFunction(options_)));
     }
 
     return CreateSummaryAndLogFailure(std::move(ceres_summary),

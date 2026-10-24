@@ -132,6 +132,12 @@ class IncrementalMapper {
     // PRNG seed for all stochastic methods during reconstruction.
     int random_seed = -1;
 
+    // The record file the structure-less registration's pose refinement
+    // (a bundle adjustment) appends to
+    // (BundleAdjustmentOptions::report_path); the pipeline fills it from
+    // the local bundle adjustment's.
+    std::string ba_report_path;
+
     // Method to find and select next best image to register.
     enum class ImageSelectionMethod {
       MAX_VISIBLE_POINTS_NUM,
