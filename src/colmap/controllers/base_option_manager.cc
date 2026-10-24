@@ -14,12 +14,13 @@ namespace config = boost::program_options;
 
 namespace colmap {
 
-BaseOptionManager::BaseOptionManager(bool add_project_options) {
+BaseOptionManager::BaseOptionManager(bool add_project_options,
+                                     bool reset_logging) {
   project_path = std::make_shared<std::filesystem::path>();
   database_path = std::make_shared<std::filesystem::path>();
   image_path = std::make_shared<std::filesystem::path>();
 
-  ResetImpl(/*reset_logging=*/true);
+  ResetImpl(reset_logging);
 
   desc_->add_options()("help,h", "");
   if (add_project_options) {
@@ -211,11 +212,18 @@ void BaseOptionManager::AddAllOptions() {
   AddImageOptions();
 }
 
-bool BaseOptionManager::Parse(const int argc, char** argv) {
+bool BaseOptionManager::Parse(const int argc,
+                              char** argv,
+                              const bool allow_unregistered) {
   config::variables_map vmap;
 
   try {
-    config::store(config::parse_command_line(argc, argv, *desc_), vmap);
+    config::command_line_parser parser(argc, argv);
+    parser.options(*desc_);
+    if (allow_unregistered) {
+      parser.allow_unregistered();
+    }
+    config::store(parser.run(), vmap);
 
     if (vmap.count("help")) {
       PrintHelp();

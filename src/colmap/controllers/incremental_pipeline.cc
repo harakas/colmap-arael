@@ -155,7 +155,9 @@ IncrementalMapper::Options IncrementalPipelineOptions::Mapper() const {
   options.prior_position_loss_scale = prior_position_loss_scale;
   options.random_seed = random_seed;
   // The structure-less registration's pose refinement is a bundle
-  // adjustment: it joins the record.
+  // adjustment: it solves through the local one's backend and joins its
+  // record.
+  options.abs_pose_backend = ba_local_backend;
   options.ba_report_path = ba_report_path;
   return options;
 }

@@ -14,6 +14,48 @@
 namespace colmap {
 namespace {
 
+TEST(OptionManager, LenientParseIgnoresUnregisteredOptions) {
+  OptionManager options;
+  options.AddMapperOptions();
+  std::vector<std::string> args = {
+      "colmap", "--Mapper.min_num_matches", "7", "--Unknown.option", "1"};
+  std::vector<char*> argv;
+  for (auto& arg : args) {
+    argv.push_back(const_cast<char*>(arg.c_str()));
+  }
+  EXPECT_FALSE(options.Parse(argv.size(), argv.data()));
+  EXPECT_TRUE(
+      options.Parse(argv.size(), argv.data(), /*allow_unregistered=*/true));
+  EXPECT_EQ(options.mapper->min_num_matches, 7);
+}
+
+TEST(OptionManager, MapperPresets) {
+  IncrementalPipelineOptions mapper;
+  const double default_tri_angle = mapper.mapper.init_min_tri_angle;
+  OptionManager::ModifyMapperForVideoData(mapper);
+  EXPECT_EQ(mapper.mapper.init_min_tri_angle, default_tri_angle / 2);
+  EXPECT_EQ(mapper.ba_global_frames_ratio, 1.4);
+  OptionManager::ModifyMapperForHighQuality(mapper);
+  EXPECT_EQ(mapper.ba_local_max_num_iterations, 30);
+  EXPECT_EQ(mapper.ba_global_max_num_iterations, 75);
+  // The presets are what the whole-manager modifiers give the mapper.
+  OptionManager options;
+  options.ModifyForVideoData();
+  options.ModifyForHighQuality();
+  EXPECT_EQ(options.mapper->mapper.init_min_tri_angle,
+            mapper.mapper.init_min_tri_angle);
+  EXPECT_EQ(options.mapper->ba_global_max_num_iterations,
+            mapper.ba_global_max_num_iterations);
+}
+
+TEST(OptionManager, ConstructionKeepsLoggingOnRequest) {
+  FLAGS_v = 3;
+  OptionManager keeps(/*add_project_options=*/true, /*reset_logging=*/false);
+  EXPECT_EQ(FLAGS_v, 3);
+  OptionManager resets;
+  EXPECT_EQ(FLAGS_v, 0);
+}
+
 TEST(OptionManager, Reset) {
   OptionManager options;
   *options.database_path = "/test/path";

@@ -389,6 +389,10 @@ void BindIncrementalMapperOptions(py::module& m) {
                      &Opts::abs_pose_refine_extra_params,
                      "Whether to estimate the extra parameters in absolute "
                      "pose estimation.")
+      .def_readwrite("abs_pose_backend",
+                     &Opts::abs_pose_backend,
+                     "Bundle adjustment backend of the structure-less "
+                     "registration's pose refinement.")
       .def_readwrite("ba_report_path",
                      &Opts::ba_report_path,
                      "File every registration's pose refinement appends its "

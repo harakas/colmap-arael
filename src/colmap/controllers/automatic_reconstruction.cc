@@ -29,6 +29,9 @@ AutomaticReconstructionController::AutomaticReconstructionController(
     const Options& options,
     std::shared_ptr<ReconstructionManager> reconstruction_manager)
     : options_(options),
+      // The command line was parsed into another manager; keep its logging
+      // flags.
+      option_manager_(/*add_project_options=*/true, /*reset_logging=*/false),
       reconstruction_manager_(std::move(reconstruction_manager)),
       active_thread_(nullptr) {
   THROW_CHECK_DIR_EXISTS(options_.workspace_path);
@@ -82,6 +85,12 @@ AutomaticReconstructionController::AutomaticReconstructionController(
     option_manager_.ModifyForHighQuality();
   } else if (options_.quality == Quality::EXTREME) {
     option_manager_.ModifyForExtremeQuality();
+  }
+
+  if (options_.mapper_options) {
+    *option_manager_.mapper = *options_.mapper_options;
+    option_manager_.mapper->image_names = {options_.image_names.begin(),
+                                           options_.image_names.end()};
   }
 
   // Feature-specific overrides that must come after quality.

@@ -20,6 +20,8 @@
 #include "colmap/util/misc.h"
 #include "colmap/util/opengl_utils.h"
 
+#include <algorithm>
+
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 
@@ -100,10 +102,48 @@ int RunAutomaticReconstructor(int argc, char** argv) {
   options.AddDefaultOption("random_seed", &reconstruction_options.random_seed);
   options.AddDefaultOption("use_gpu", &reconstruction_options.use_gpu);
   options.AddDefaultOption("gpu_index", &reconstruction_options.gpu_index);
-  options.AddDefaultOption("Mapper.ba_backend", &ba_backend, "{ceres, caspar}");
+  options.AddDefaultOption(
+      "Mapper.ba_backend", &ba_backend, "{ceres, caspar, arael}");
+
+  // Every Mapper.* option is accepted, with the data type and quality
+  // presets as its defaults: a lenient first pass reads the two preset
+  // selectors, the presets are applied to the mapper options, the
+  // block is registered with those values as defaults, and the strict
+  // pass then parses everything. --help skips the first pass and shows
+  // the block under the default presets.
+  const bool help_requested =
+      std::any_of(argv, argv + argc, [](const char* arg) {
+        return std::string(arg) == "--help" || std::string(arg) == "-h";
+      });
+  if (!help_requested &&
+      !options.Parse(argc, argv, /*allow_unregistered=*/true)) {
+    return EXIT_FAILURE;
+  }
+  {
+    std::string data_type_upper = data_type;
+    StringToUpper(&data_type_upper);
+    if (data_type_upper == "VIDEO") {
+      OptionManager::ModifyMapperForVideoData(*options.mapper);
+    } else if (data_type_upper == "INDIVIDUAL") {
+      OptionManager::ModifyMapperForIndividualData(*options.mapper);
+    }
+    std::string quality_upper = quality;
+    StringToUpper(&quality_upper);
+    if (quality_upper == "LOW") {
+      OptionManager::ModifyMapperForLowQuality(*options.mapper);
+    } else if (quality_upper == "MEDIUM") {
+      OptionManager::ModifyMapperForMediumQuality(*options.mapper);
+    } else if (quality_upper == "HIGH") {
+      OptionManager::ModifyMapperForHighQuality(*options.mapper);
+    } else if (quality_upper == "EXTREME") {
+      OptionManager::ModifyMapperForExtremeQuality(*options.mapper);
+    }
+  }
+  options.AddMapperOptions();
   if (!options.Parse(argc, argv)) {
     return EXIT_FAILURE;
   }
+  reconstruction_options.mapper_options = options.mapper;
 
   if (!image_list_path.empty()) {
     reconstruction_options.image_names = ReadTextFileLines(image_list_path);

@@ -108,6 +108,12 @@ class AutomaticReconstructionController : public Thread {
 
     // Bundle adjustment solver backend for local and global BA.
     BundleAdjustmentBackend ba_backend = BundleAdjustmentBackend::CERES;
+
+    // The incremental mapper's options, applied on top of the data type
+    // and quality presets; the options above still win where they
+    // overlap (the thread count, the seed, the backend). Null for the
+    // presets alone.
+    std::shared_ptr<IncrementalPipelineOptions> mapper_options;
   };
 
   AutomaticReconstructionController(

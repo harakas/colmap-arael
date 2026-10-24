@@ -24,7 +24,11 @@ class BaseOptionManager {
  public:
   NON_COPYABLE(BaseOptionManager)
 
-  explicit BaseOptionManager(bool add_project_options = true);
+  // reset_logging=false keeps the process's current logging flags (the
+  // verbosity, the log directory and target); a second manager built
+  // after the command line was parsed must not undo them.
+  explicit BaseOptionManager(bool add_project_options = true,
+                             bool reset_logging = true);
   BaseOptionManager(BaseOptionManager&&) = default;
   BaseOptionManager& operator=(BaseOptionManager&&) = default;
   virtual ~BaseOptionManager() = default;
@@ -67,7 +71,10 @@ class BaseOptionManager {
 
   virtual bool Check();
 
-  bool Parse(int argc, char** argv);
+  // allow_unregistered=true ignores options that are not registered
+  // (yet): a command can parse the options that decide which further
+  // options to register, then parse again strictly.
+  bool Parse(int argc, char** argv, bool allow_unregistered = false);
   virtual bool Read(const std::filesystem::path& path,
                     bool allow_unregistered = true);
   bool ReRead(const std::filesystem::path& path,

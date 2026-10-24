@@ -48,7 +48,11 @@ namespace colmap {
 
 class OptionManager : public BaseOptionManager {
  public:
-  explicit OptionManager(bool add_project_options = true);
+  // reset_logging=false keeps the process's current logging flags (the
+  // verbosity, the log directory and target); a second manager built
+  // after the command line was parsed must not undo them.
+  explicit OptionManager(bool add_project_options = true,
+                         bool reset_logging = true);
 
   // Create "optimal" set of options for different reconstruction scenarios.
   void ModifyForIndividualData();
@@ -62,6 +66,16 @@ class OptionManager : public BaseOptionManager {
   void ModifyForMediumQuality();
   void ModifyForHighQuality();
   void ModifyForExtremeQuality();
+
+  // The mapper's part of the presets above, on any mapper options: what
+  // the automatic reconstructor applies before it registers the Mapper
+  // options with those values as their defaults.
+  static void ModifyMapperForIndividualData(IncrementalPipelineOptions& mapper);
+  static void ModifyMapperForVideoData(IncrementalPipelineOptions& mapper);
+  static void ModifyMapperForLowQuality(IncrementalPipelineOptions& mapper);
+  static void ModifyMapperForMediumQuality(IncrementalPipelineOptions& mapper);
+  static void ModifyMapperForHighQuality(IncrementalPipelineOptions& mapper);
+  static void ModifyMapperForExtremeQuality(IncrementalPipelineOptions& mapper);
 
   void AddAllOptions() override;
   void AddSingleViewCalibrationOptions();

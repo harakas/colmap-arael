@@ -66,8 +66,8 @@ std::string MakeCameraModelsHelpText() {
 }
 }  // namespace
 
-OptionManager::OptionManager(bool add_project_options)
-    : BaseOptionManager(add_project_options) {
+OptionManager::OptionManager(bool add_project_options, bool reset_logging)
+    : BaseOptionManager(add_project_options, reset_logging) {
   image_reader = std::make_shared<ImageReaderOptions>();
   single_view_calibration = std::make_shared<SingleViewCalibrationOptions>();
   feature_extraction = std::make_shared<FeatureExtractionOptions>();
@@ -99,21 +99,66 @@ OptionManager::OptionManager(bool add_project_options)
   render = std::make_shared<RenderOptions>();
 }
 
+void OptionManager::ModifyMapperForIndividualData(
+    IncrementalPipelineOptions& mapper) {
+  mapper.min_focal_length_ratio = 0.1;
+  mapper.max_focal_length_ratio = 10;
+  mapper.max_extra_param = std::numeric_limits<double>::max();
+}
+
+void OptionManager::ModifyMapperForVideoData(
+    IncrementalPipelineOptions& mapper) {
+  mapper.mapper.init_min_tri_angle /= 2;
+  mapper.ba_global_frames_ratio = 1.4;
+  mapper.ba_global_points_ratio = 1.4;
+  mapper.min_focal_length_ratio = 0.1;
+  mapper.max_focal_length_ratio = 10;
+  mapper.max_extra_param = std::numeric_limits<double>::max();
+}
+
+void OptionManager::ModifyMapperForLowQuality(
+    IncrementalPipelineOptions& mapper) {
+  mapper.ba_local_max_num_iterations = mapper.EffBaLocalMaxNumIterations() / 2;
+  mapper.ba_global_max_num_iterations =
+      mapper.EffBaGlobalMaxNumIterations() / 2;
+  mapper.ba_global_frames_ratio *= 1.2;
+  mapper.ba_global_points_ratio *= 1.2;
+  mapper.ba_global_max_refinements = 2;
+}
+
+void OptionManager::ModifyMapperForMediumQuality(
+    IncrementalPipelineOptions& mapper) {
+  mapper.ba_local_max_num_iterations =
+      static_cast<int>(mapper.EffBaLocalMaxNumIterations() / 1.5);
+  mapper.ba_global_max_num_iterations =
+      static_cast<int>(mapper.EffBaGlobalMaxNumIterations() / 1.5);
+  mapper.ba_global_frames_ratio *= 1.1;
+  mapper.ba_global_points_ratio *= 1.1;
+  mapper.ba_global_max_refinements = 2;
+}
+
+void OptionManager::ModifyMapperForHighQuality(
+    IncrementalPipelineOptions& mapper) {
+  mapper.ba_local_max_num_iterations = 30;
+  mapper.ba_local_max_refinements = 3;
+  mapper.ba_global_max_num_iterations = 75;
+}
+
+void OptionManager::ModifyMapperForExtremeQuality(
+    IncrementalPipelineOptions& mapper) {
+  mapper.ba_local_max_num_iterations = 40;
+  mapper.ba_local_max_refinements = 3;
+  mapper.ba_global_max_num_iterations = 100;
+}
+
 void OptionManager::ModifyForIndividualData() {
-  mapper->min_focal_length_ratio = 0.1;
-  mapper->max_focal_length_ratio = 10;
-  mapper->max_extra_param = std::numeric_limits<double>::max();
+  ModifyMapperForIndividualData(*mapper);
 }
 
 void OptionManager::ModifyForVideoData() {
   const bool kResetPaths = false;
   ResetOptions(kResetPaths);
-  mapper->mapper.init_min_tri_angle /= 2;
-  mapper->ba_global_frames_ratio = 1.4;
-  mapper->ba_global_points_ratio = 1.4;
-  mapper->min_focal_length_ratio = 0.1;
-  mapper->max_focal_length_ratio = 10;
-  mapper->max_extra_param = std::numeric_limits<double>::max();
+  ModifyMapperForVideoData(*mapper);
 #if defined(COLMAP_MVS_ENABLED)
   stereo_fusion->min_num_pixels = 15;
 #endif
@@ -132,13 +177,7 @@ void OptionManager::ModifyForLowQuality() {
   sequential_pairing->loop_detection_num_images /= 2;
   vocab_tree_pairing->max_num_features = 256;
   vocab_tree_pairing->num_images /= 2;
-  mapper->ba_local_max_num_iterations =
-      mapper->EffBaLocalMaxNumIterations() / 2;
-  mapper->ba_global_max_num_iterations =
-      mapper->EffBaGlobalMaxNumIterations() / 2;
-  mapper->ba_global_frames_ratio *= 1.2;
-  mapper->ba_global_points_ratio *= 1.2;
-  mapper->ba_global_max_refinements = 2;
+  ModifyMapperForLowQuality(*mapper);
 #if defined(COLMAP_MVS_ENABLED)
   patch_match_stereo->max_image_size = 1000;
   patch_match_stereo->window_radius = 4;
@@ -158,13 +197,7 @@ void OptionManager::ModifyForMediumQuality() {
   sequential_pairing->loop_detection_num_images /= 1.5;
   vocab_tree_pairing->max_num_features = 1024;
   vocab_tree_pairing->num_images /= 1.5;
-  mapper->ba_local_max_num_iterations =
-      static_cast<int>(mapper->EffBaLocalMaxNumIterations() / 1.5);
-  mapper->ba_global_max_num_iterations =
-      static_cast<int>(mapper->EffBaGlobalMaxNumIterations() / 1.5);
-  mapper->ba_global_frames_ratio *= 1.1;
-  mapper->ba_global_points_ratio *= 1.1;
-  mapper->ba_global_max_refinements = 2;
+  ModifyMapperForMediumQuality(*mapper);
 #if defined(COLMAP_MVS_ENABLED)
   patch_match_stereo->max_image_size = 1600;
   patch_match_stereo->window_radius = 4;
@@ -184,9 +217,7 @@ void OptionManager::ModifyForHighQuality() {
   feature_extraction->sift->max_num_features = 8192;
   feature_matching->guided_matching = true;
   vocab_tree_pairing->max_num_features = 4096;
-  mapper->ba_local_max_num_iterations = 30;
-  mapper->ba_local_max_refinements = 3;
-  mapper->ba_global_max_num_iterations = 75;
+  ModifyMapperForHighQuality(*mapper);
 #if defined(COLMAP_MVS_ENABLED)
   patch_match_stereo->max_image_size = 2400;
   stereo_fusion->max_image_size = 2400;
@@ -198,9 +229,7 @@ void OptionManager::ModifyForExtremeQuality() {
   feature_extraction->sift->estimate_affine_shape = true;
   feature_extraction->sift->domain_size_pooling = true;
   feature_matching->guided_matching = true;
-  mapper->ba_local_max_num_iterations = 40;
-  mapper->ba_local_max_refinements = 3;
-  mapper->ba_global_max_num_iterations = 100;
+  ModifyMapperForExtremeQuality(*mapper);
 }
 
 void OptionManager::AddAllOptions() {
