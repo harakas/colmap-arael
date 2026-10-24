@@ -8,7 +8,9 @@ import dataclasses
 import datetime
 import functools
 import itertools
+import json
 import multiprocessing
+import os
 import pickle
 import platform
 import shutil
@@ -66,11 +68,80 @@ def _run_with_log(
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "wb") as fh:
-        runner = subprocess.check_call if check else subprocess.call
         popen_kwargs = dict(stdout=fh, stderr=subprocess.STDOUT, **kwargs)
         if platform.system() != "Windows":
             popen_kwargs["preexec_fn"] = _set_pdeathsig
-        return runner(cmd, **popen_kwargs)
+        with subprocess.Popen(cmd, **popen_kwargs) as proc:
+            returncode, peak_kb = _wait_with_peak_rss(proc)
+    if peak_kb is not None:
+        _record_peak_rss(log_path, peak_kb)
+    if check and returncode != 0:
+        raise subprocess.CalledProcessError(returncode, cmd)
+    return returncode
+
+
+def _database_has_verified_pairs(database_path: Path) -> bool:
+    if not database_path.exists():
+        return False
+    with pycolmap.Database.open(str(database_path)) as database:
+        return database.num_verified_image_pairs() > 0
+
+
+def _thread_env(num_threads: int) -> dict[str, str] | None:
+    """Environment for a COLMAP subprocess that bounds the thread pools of
+    the libraries underneath it (OpenMP, OpenBLAS, MKL) to num_threads.
+    COLMAP's own --num_threads does not reach them. None when num_threads
+    is not positive, leaving the pools at their defaults."""
+    if num_threads <= 0:
+        return None
+    env = os.environ.copy()
+    for name in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        env[name] = str(num_threads)
+    return env
+
+
+def _wait_with_peak_rss(proc: subprocess.Popen) -> tuple[int, int | None]:
+    """Wait for proc and return its exit code and its resident high-water
+    mark in kB, taken from the resource usage the kernel reports when the
+    child is reaped (wait4). The peak is None where wait4 is unavailable.
+    The child is forked from this interpreter before it execs, so the
+    figure cannot fall below the interpreter's resident size at that
+    moment."""
+    if not hasattr(os, "wait4"):
+        return proc.wait(), None
+    _, status, usage = os.wait4(proc.pid, 0)
+    returncode = os.waitstatus_to_exitcode(status)
+    # The child is reaped here, not by Popen: record the exit code so
+    # Popen's own wait does not look for it again.
+    proc.returncode = returncode
+    peak_kb = usage.ru_maxrss
+    if platform.system() == "Darwin":
+        peak_kb //= 1024  # reported in bytes there
+    return returncode, peak_kb
+
+
+def _record_peak_rss(log_path: Path, peak_kb: int) -> None:
+    """Append the phase's peak resident memory to its log and to
+    peak_memory.json next to it, keyed by the log's stem (the phase)."""
+    peak_mb = peak_kb / 1024.0
+    with open(log_path, "ab") as fh:
+        fh.write(f"peak resident memory: {peak_mb:.1f} MB\n".encode())
+    json_path = log_path.parent / "peak_memory.json"
+    peaks = {}
+    if json_path.exists():
+        with open(json_path) as fh:
+            peaks = json.load(fh)
+    peaks[log_path.stem] = round(peak_mb, 1)
+    with open(json_path, "w") as fh:
+        json.dump(peaks, fh, indent=2)
+    pycolmap.logging.info(
+        f"Peak resident memory of {log_path.stem}: {peak_mb:.1f} MB"
+    )
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -110,12 +181,21 @@ class SceneInfo:
     )
 
 
+# Reprojection error quantiles reported per scene, in percent.
+REPROJ_QUANTILES = np.array([50, 90, 95, 98, 99])
+
+
 @dataclasses.dataclass(kw_only=True)
 class SceneResult:
     # Scene information for which the result was computed.
     scene_info: SceneInfo
     # Flat list of errors.
     errors: npt.NDArray[np.floating]
+    # Reprojection error of every observation in the estimated models, in
+    # pixels.
+    reproj_errors: npt.NDArray[np.floating] = dataclasses.field(
+        default_factory=lambda: np.array([], dtype=np.float32)
+    )
     # Number of images in the scene.
     num_images: int
     # Number of registered images in the scene (over all components).
@@ -151,6 +231,18 @@ class Metrics:
     # Ground-truth position accuracy (used as min_error when computing AUC).
     # Carried so cross-dataset aggregations can pick a sensible value.
     position_accuracy_gt: float = 0.0
+    # Reprojection error quantiles (REPROJ_QUANTILES) over the observations
+    # of the estimated models, in pixels; NaN when there are none.
+    reproj_quantiles: npt.NDArray[np.floating] = dataclasses.field(
+        default_factory=lambda: np.full(len(REPROJ_QUANTILES), np.nan)
+    )
+    # Number of observations behind reproj_quantiles.
+    num_observations: int = 0
+    # Raw per-observation reprojection errors, kept so pooled summaries can
+    # recompute their quantiles. Empty for __avg__.
+    reproj_errors: npt.NDArray[np.floating] = dataclasses.field(
+        default_factory=lambda: np.array([], dtype=np.float32)
+    )
 
 
 MetricsByScene = dict[str, Metrics]
@@ -377,6 +469,32 @@ def parse_args(description: str | None = None) -> argparse.Namespace:
         "--overwrite_alignment", default=False, action="store_true"
     )
     parser.add_argument("--colmap_path", required=True)
+    parser.add_argument(
+        "--colmap_extra_args",
+        nargs="*",
+        action="extend",
+        default=[],
+        help="Extra arguments appended to every automatic_reconstructor "
+        "call. Pass each as one token with '=' on both sides so the "
+        "parser does not read it as an option of this script, e.g. "
+        "--colmap_extra_args=--Mapper.init_image_id1=5; repeat the "
+        "option for more.",
+    )
+    parser.add_argument(
+        "--ba_backend",
+        default=None,
+        help="Bundle adjustment backend of the mapper (ceres, caspar or "
+        "arael), passed as the flag each reconstruction command spells it "
+        "with. Default: the command's own default.",
+    )
+    parser.add_argument(
+        "--ba_report",
+        default=False,
+        action="store_true",
+        help="Record every bundle adjustment of the mapper phase "
+        "(ba_report.jsonl in the scene workspace) and write a summary "
+        "next to it (ba_report.txt).",
+    )
     parser.add_argument("--use_gpu", default=True, action="store_true")
     parser.add_argument("--use_cpu", dest="use_gpu", action="store_false")
     parser.add_argument(
@@ -621,6 +739,7 @@ def colmap_reconstruction(
     phase_tracker: _PhaseTracker | None = None,
 ) -> None:
     phase_tracker = phase_tracker or _PhaseTracker()
+    env = _thread_env(num_threads)
     workspace_path.mkdir(parents=True, exist_ok=True)
 
     database_path = workspace_path / "database.db"
@@ -708,28 +827,37 @@ def colmap_reconstruction(
         colmap_args + (colmap_extra_args or []) + extraction_args,
         workspace_path / "extraction.log",
         cwd=workspace_path,
+        env=env,
     )
 
     if camera_priors_sparse_gt is not None:
         set_camera_priors(database_path, camera_priors_sparse_gt)
 
     phase_tracker.set("matching")
-    _run_with_log(
-        colmap_args
-        + (colmap_extra_args or [])
-        + [
-            "--extraction",
-            "0",
-            "--matching",
-            "1",
-            "--sparse",
-            "0",
-            "--dense",
-            "0",
-        ],
-        workspace_path / "matching.log",
-        cwd=workspace_path,
-    )
+    if _database_has_verified_pairs(database_path):
+        # The matcher would only rebuild its retrieval index to propose
+        # pairs that are already matched.
+        pycolmap.logging.info(
+            "Skipping matching, as the database already has verified pairs"
+        )
+    else:
+        _run_with_log(
+            colmap_args
+            + (colmap_extra_args or [])
+            + [
+                "--extraction",
+                "0",
+                "--matching",
+                "1",
+                "--sparse",
+                "0",
+                "--dense",
+                "0",
+            ],
+            workspace_path / "matching.log",
+            cwd=workspace_path,
+            env=env,
+        )
 
     if covisibility_sparse_gt is not None:
         filter_covisibility(
@@ -746,9 +874,12 @@ def colmap_reconstruction(
     # applications to the low efficiency cores but we want to use the
     # performance cores.
     phase_tracker.set("reconstruction")
+    report_args = _ba_report_args(args, workspace_path)
     _run_with_log(
         colmap_args
         + (colmap_extra_args or [])
+        + _ba_backend_args(args, "automatic_reconstructor")
+        + report_args
         + [
             "--extraction",
             "0",
@@ -761,7 +892,165 @@ def colmap_reconstruction(
         ],
         workspace_path / "reconstruction.log",
         cwd=workspace_path,
+        env=env,
     )
+    if report_args:
+        _write_ba_summary(workspace_path)
+
+
+def _ba_backend_args(args: argparse.Namespace, command: str) -> list:
+    """The flags that set the bundle adjustment backend of a reconstruction
+    command to --ba_backend; empty without it. automatic_reconstructor
+    takes one flag and overwrites the mapper's local and global backend
+    with it, the mapper command takes those two, global_mapper its own."""
+    backend = getattr(args, "ba_backend", None)
+    if not backend:
+        return []
+    backend = backend.upper()
+    if command == "automatic_reconstructor":
+        return [f"--Mapper.ba_backend={backend}"]
+    if command == "mapper":
+        return [
+            f"--Mapper.ba_local_backend={backend}",
+            f"--Mapper.ba_global_backend={backend}",
+        ]
+    if command == "global_mapper":
+        return [f"--GlobalMapper.ba_backend={backend}"]
+    raise ValueError(f"Unknown reconstruction command: {command}")
+
+
+def _ba_report_args(args: argparse.Namespace, workspace_path: Path) -> list:
+    """The mapper flag that appends every bundle adjustment to the record in
+    the workspace, after removing an earlier record; empty without
+    --ba_report."""
+    if not getattr(args, "ba_report", False):
+        return []
+    record_path = workspace_path / "ba_report.jsonl"
+    record_path.unlink(missing_ok=True)
+    return [f"--Mapper.ba_report_path={record_path}"]
+
+
+def _write_ba_summary(workspace_path: Path) -> None:
+    """Summarize the record in the workspace next to it and in the log."""
+    summary = summarize_ba_report(workspace_path / "ba_report.jsonl")
+    with open(workspace_path / "ba_report.txt", "w") as fh:
+        fh.write(summary + "\n")
+    pycolmap.logging.info("Bundle adjustment summary:\n" + summary)
+
+
+def summarize_ba_report(record_path: Path) -> str:
+    """Summarize the bundle adjustment records a mapper run appended to
+    record_path (one JSON object per solve, BundleAdjustmentOptions::
+    report_path): per backend the solve count, the iterations and the
+    time, the terminations, and for arael the time per phase. A value
+    the solve left non-finite is null in the record; such solves are
+    listed, and they add nothing to the sums."""
+
+    def number(record: dict, key: str) -> float:
+        value = record.get(key)
+        return 0.0 if value is None else value
+
+    records = []
+    if record_path.exists():
+        with open(record_path) as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+    if not records:
+        return f"no bundle adjustment records in {record_path}"
+    lines = [f"{len(records)} bundle adjustments recorded in {record_path}"]
+    by_backend: dict[str, list[dict]] = collections.defaultdict(list)
+    for record in records:
+        by_backend[record.get("backend", "?")].append(record)
+    lines.append(
+        f"{'backend':8s} {'solves':>7s} {'iters':>8s} {'accepted':>9s} "
+        f"{'time [s]':>9s} {'median':>7s} {'max iters':>9s} {'max res':>9s}"
+    )
+    for backend, rows in sorted(by_backend.items()):
+        iters = np.array([r.get("iterations", 0) for r in rows])
+        accepted = sum(r.get("accepted", 0) for r in rows)
+        time_s = sum(number(r, "time") for r in rows)
+        max_res = max(r.get("residuals", 0) for r in rows)
+        lines.append(
+            f"{backend:8s} {len(rows):7d} {int(iters.sum()):8d} "
+            f"{accepted:9d} {time_s:9.1f} {np.median(iters):7.1f} "
+            f"{int(iters.max()):9d} {max_res:9d}"
+        )
+    # The same per call site: local, global and the pose refinement
+    # during registration carry their own solve counts and time.
+    by_site: dict[tuple[str, str], list[dict]] = collections.defaultdict(list)
+    for record in records:
+        by_site[(record.get("backend", "?"), record.get("site", "?"))].append(
+            record
+        )
+    if any(site != "?" for _, site in by_site):
+        lines.append(
+            f"{'backend':8s} {'site':7s} {'solves':>7s} {'iters':>8s} "
+            f"{'time [s]':>9s} {'max res':>9s}"
+        )
+        for (backend, site), rows in sorted(by_site.items()):
+            lines.append(
+                f"{backend:8s} {site:7s} {len(rows):7d} "
+                f"{sum(r.get('iterations', 0) for r in rows):8d} "
+                f"{sum(number(r, 'time') for r in rows):9.1f} "
+                f"{max(r.get('residuals', 0) for r in rows):9d}"
+            )
+    terminations = collections.Counter(
+        (r.get("backend", "?"), r.get("termination", "?")) for r in records
+    )
+    lines.append(
+        "terminations: "
+        + ", ".join(
+            f"{backend} {term} {count}"
+            for (backend, term), count in sorted(terminations.items())
+        )
+    )
+    # Every solve that did not converge, with what identifies it.
+    converged = {"converged", "CONVERGENCE", "USER_SUCCESS"}
+    for record in records:
+        term = record.get("termination", "?")
+        if term not in converged:
+            lines.append(
+                f"  {record.get('backend', '?')} {record.get('site', '?')} "
+                f"{record.get('residuals', 0)} residuals, "
+                f"{record.get('iterations', 0)} iterations, "
+                f"{number(record, 'time'):.2f} s: {term}"
+            )
+    # Every solve that left a value non-finite.
+    for record in records:
+        nulls = [
+            key
+            for key in ("initial_cost", "final_cost", "time")
+            if key in record and record[key] is None
+        ]
+        if nulls:
+            lines.append(
+                f"  {record.get('backend', '?')} {record.get('site', '?')} "
+                f"{record.get('residuals', 0)} residuals: non-finite "
+                + ", ".join(nulls)
+            )
+    arael_rows = [r for r in by_backend.get("arael", []) if "timing" in r]
+    if arael_rows:
+        phases = ["assembly", "analysis", "linear_solve", "cost", "advance"]
+        totals = {
+            p: sum(number(r["timing"], p) for r in arael_rows) for p in phases
+        }
+        total = sum(number(r["timing"], "total") for r in arael_rows)
+        parts = ", ".join(
+            f"{p.replace('_', ' ')} {totals[p]:.1f}"
+            + (f" ({100 * totals[p] / total:.0f}%)" if total > 0 else "")
+            for p in phases
+        )
+        lines.append(f"arael phases [s] of {total:.1f}: {parts}")
+    slowest = max(records, key=lambda r: number(r, "time"))
+    lines.append(
+        f"slowest solve: {slowest.get('backend', '?')} "
+        f"{slowest.get('residuals', 0)} residuals, "
+        f"{slowest.get('iterations', 0)} iterations, "
+        f"{number(slowest, 'time'):.1f} s, {slowest.get('termination', '?')}"
+    )
+    return "\n".join(lines)
 
 
 def panorama_reconstruction(
@@ -769,16 +1058,27 @@ def panorama_reconstruction(
     scene_info: SceneInfo,
     num_threads: int,
     gpu_index: str,
+    colmap_extra_args: list | None = None,
     phase_tracker: _PhaseTracker | None = None,
 ) -> None:
-    """Run the reusable pycolmap panorama pipeline for a benchmark scene."""
+    """Reconstruct a panorama scene: the pycolmap panorama pipeline prepares
+    the database (rendering, extraction, matching) and the colmap binary
+    runs the mapper, so the mapper flags, the bundle adjustment record and
+    the peak memory are measured as for every other dataset."""
     phase_tracker = phase_tracker or _PhaseTracker()
+    env = _thread_env(num_threads)
     workspace_path = scene_info.workspace_path
-    sparse_path = workspace_path / scene_info.reconstruction_subdir
+    database_path = workspace_path / "database.db"
+    sparse_path = workspace_path / "sparse"
+    equirect_path = workspace_path / "sparse_equirectangular"
 
-    if args.overwrite_reconstruction and workspace_path.exists():
-        shutil.rmtree(workspace_path)
-    if sparse_path.exists():
+    if args.overwrite_database and database_path.exists():
+        database_path.unlink()
+    if args.overwrite_reconstruction:
+        for path in (sparse_path, equirect_path):
+            if path.exists():
+                shutil.rmtree(path)
+    if (workspace_path / scene_info.reconstruction_subdir).exists():
         pycolmap.logging.info("Skipping reconstruction, as it already exists")
         return
     if args.feature != "sift":
@@ -817,25 +1117,102 @@ def panorama_reconstruction(
             else args.covisibility_min_shared_points
         )
 
-    workspace_path.mkdir(parents=True, exist_ok=True)
-    phase_tracker.set("reconstruction")
-    panorama.reconstruct(
-        scene_info.image_path,
-        workspace_path,
-        panorama.PanoramaReconstructionOptions(
-            matcher=panorama.Matcher.SEQUENTIAL,
-            mapper=panorama.Mapper(args.mapper),
-            render_type=panorama.PanoRenderType(render_type),
-            random_seed=args.random_seed,
-            num_threads=num_threads,
-            gpu_index=gpu_index,
-            use_gpu=args.use_gpu,
-            covisibility_path=covisibility_path,
-            covisibility_min_shared_points=min_shared_points,
-            show_progress=False,
-        ),
+    options = panorama.PanoramaReconstructionOptions(
+        matcher=panorama.Matcher.SEQUENTIAL,
+        mapper=panorama.Mapper(args.mapper),
+        render_type=panorama.PanoRenderType(render_type),
+        random_seed=args.random_seed,
+        num_threads=num_threads,
+        gpu_index=gpu_index,
+        use_gpu=args.use_gpu,
+        covisibility_path=covisibility_path,
+        covisibility_min_shared_points=min_shared_points,
+        show_progress=False,
     )
-    sparse_path.mkdir(parents=True, exist_ok=True)
+    spherical = options.render_type == panorama.PanoRenderType.SPHERICAL
+
+    workspace_path.mkdir(parents=True, exist_ok=True)
+    if args.random_seed >= 0:
+        # Seeds the two-view RANSAC of the in-process matching; the mapper
+        # gets the seed as a flag.
+        pycolmap.set_random_seed(args.random_seed)
+    phase_tracker.set("matching")
+    processor = None
+    if _database_has_verified_pairs(database_path):
+        pycolmap.logging.info(
+            "Skipping matching, as the database already has verified pairs"
+        )
+        if not spherical:
+            processor = panorama.perspective_processor(
+                scene_info.image_path, workspace_path, options.render_type
+            )
+            processor.init_from_pano(
+                panorama.list_pano_images(scene_info.image_path)[0]
+            )
+    else:
+        database_path.unlink(missing_ok=True)
+        if spherical:
+            panorama.prepare_spherical(
+                scene_info.image_path, options, database_path
+            )
+        else:
+            processor = panorama.prepare_perspective(
+                scene_info.image_path, workspace_path, options, database_path
+            )
+
+    phase_tracker.set("reconstruction")
+    sparse_path.mkdir(exist_ok=True)
+    if args.mapper == "incremental":
+        command, prefix = "mapper", "Mapper"
+        refine_rig = "ba_refine_sensor_from_rig"
+    else:
+        command, prefix = "global_mapper", "GlobalMapper"
+        refine_rig = "refine_sensor_from_rig"
+    mapper_args = [
+        args.colmap_path,
+        command,
+        "--database_path",
+        database_path,
+        "--image_path",
+        scene_info.image_path
+        if processor is None
+        else processor.output_image_dir,
+        "--output_path",
+        sparse_path,
+        f"--{prefix}.num_threads",
+        str(num_threads),
+        f"--{prefix}.random_seed",
+        str(args.random_seed),
+    ]
+    if not spherical:
+        # The virtual cameras and their poses in the rig are exact.
+        for name in (
+            refine_rig,
+            "ba_refine_focal_length",
+            "ba_refine_principal_point",
+            "ba_refine_extra_params",
+        ):
+            mapper_args += [f"--{prefix}.{name}", "0"]
+    report_args = _ba_report_args(args, workspace_path)
+    _run_with_log(
+        mapper_args
+        + (colmap_extra_args or [])
+        + _ba_backend_args(args, command)
+        + report_args,
+        workspace_path / "reconstruction.log",
+        cwd=workspace_path,
+        env=env,
+    )
+    if report_args:
+        _write_ba_summary(workspace_path)
+
+    if processor is not None:
+        recs = {
+            int(model_path.name): pycolmap.Reconstruction(str(model_path))
+            for model_path in sorted(sparse_path.iterdir())
+            if model_path.is_dir()
+        }
+        panorama.write_equirectangular(processor, recs, workspace_path)
 
 
 def colmap_alignment(
@@ -942,7 +1319,8 @@ def process_scene(
                 else None
             ),
             num_threads=num_threads,
-            colmap_extra_args=scene_info.colmap_extra_args,
+            colmap_extra_args=(scene_info.colmap_extra_args or [])
+            + args.colmap_extra_args,
             gpu_index=gpu_index,
             phase_tracker=tracker,
         )
@@ -952,6 +1330,8 @@ def process_scene(
             scene_info=scene_info,
             num_threads=num_threads,
             gpu_index=gpu_index,
+            colmap_extra_args=(scene_info.colmap_extra_args or [])
+            + args.colmap_extra_args,
             phase_tracker=tracker,
         )
 
@@ -1022,15 +1402,54 @@ def process_scene(
         position_accuracy_gt=position_accuracy_gt,
     )
 
+    reproj_errors = compute_reprojection_errors(sub_models)
+
     tracker.set("finished")
     return SceneResult(
         scene_info=scene_info,
         errors=errors,
+        reproj_errors=reproj_errors,
         num_images=sparse_gt.num_images(),
         num_reg_images=num_reg_images,
         num_components=num_components,
         largest_component=largest_component,
     )
+
+
+def compute_reprojection_errors(
+    sub_models: Sequence[pycolmap.Reconstruction],
+) -> npt.NDArray[np.floating]:
+    """Reprojection error in pixels of every observation (a 2D point with a
+    3D point) of every posed image in the given models."""
+    errors = []
+    for sub_model in sub_models:
+        for image in sub_model.images.values():
+            if not image.has_pose:
+                continue
+            points = [p for p in image.points2D if p.has_point3D()]
+            if not points:
+                continue
+            camera = sub_model.cameras[image.camera_id]
+            xy = np.array([p.xy for p in points])
+            xyz = np.array(
+                [sub_model.points3D[p.point3D_id].xyz for p in points]
+            )
+            projected = np.asarray(
+                camera.img_from_cam(image.cam_from_world() * xyz)
+            ).reshape(-1, 2)
+            error = np.linalg.norm(projected - xy, axis=1)
+            errors.append(error[np.isfinite(error)].astype(np.float32))
+    if not errors:
+        return np.array([], dtype=np.float32)
+    return np.concatenate(errors)
+
+
+def compute_reproj_quantiles(
+    reproj_errors: npt.NDArray[np.floating],
+) -> npt.NDArray[np.floating]:
+    if len(reproj_errors) == 0:
+        return np.full(len(REPROJ_QUANTILES), np.nan)
+    return np.percentile(reproj_errors, REPROJ_QUANTILES)
 
 
 def _parse_gpu_index(args: argparse.Namespace) -> list[int]:
@@ -1165,6 +1584,9 @@ def process_scenes(
             largest_component=result.largest_component,
             errors=np.asarray(result.errors),
             position_accuracy_gt=position_accuracy_gt,
+            reproj_quantiles=compute_reproj_quantiles(result.reproj_errors),
+            num_observations=len(result.reproj_errors),
+            reproj_errors=np.asarray(result.reproj_errors, dtype=np.float32),
         )
 
     for category in metrics:
@@ -1206,6 +1628,15 @@ def aggregate_scene_metrics(
     sum_largest_component = sum(m.largest_component for m in real)
     min_pos_acc = min(m.position_accuracy_gt for m in real)
     pooled_errors = np.concatenate([m.errors for m in real])
+    pooled_reproj = np.concatenate(
+        [np.asarray(m.reproj_errors, dtype=np.float32) for m in real]
+    )
+    sum_num_observations = sum(m.num_observations for m in real)
+    scene_quantiles = np.array([m.reproj_quantiles for m in real])
+    if np.isnan(scene_quantiles).all():
+        avg_quantiles = np.full(len(REPROJ_QUANTILES), np.nan)
+    else:
+        avg_quantiles = np.nanmean(scene_quantiles, axis=0)
 
     summary = {
         "__avg__": Metrics(
@@ -1218,6 +1649,8 @@ def aggregate_scene_metrics(
             num_components=int(round(sum_num_components / n)),
             largest_component=int(round(sum_largest_component / n)),
             position_accuracy_gt=min_pos_acc,
+            reproj_quantiles=avg_quantiles,
+            num_observations=int(round(sum_num_observations / n)),
         ),
     }
     if pooled_errors.size:
@@ -1234,6 +1667,9 @@ def aggregate_scene_metrics(
             largest_component=sum_largest_component,
             errors=pooled_errors,
             position_accuracy_gt=min_pos_acc,
+            reproj_quantiles=compute_reproj_quantiles(pooled_reproj),
+            num_observations=sum_num_observations,
+            reproj_errors=pooled_reproj,
         )
     return summary
 
@@ -1711,14 +2147,18 @@ def create_result_table(
     size_aucs = max(len(label) + 2, len(thresholds) * 7 - 1)
     size_imgs = 12
     size_comps = 12
-    size_sep = size_scenes + size_aucs + size_imgs + size_comps + 3
+    px_label = "reproj. px @ %"
+    size_px = max(len(px_label) + 2, len(REPROJ_QUANTILES) * 6 - 1)
+    size_sep = size_scenes + size_aucs + size_imgs + size_comps + size_px + 4
     header = (
         f"{column:=^{size_scenes}} {label:=^{size_aucs}} "
-        f"{'images':=^{size_imgs}} {'components':=^{size_comps}}"
+        f"{'images':=^{size_imgs}} {'components':=^{size_comps}} "
+        f"{px_label:=^{size_px}}"
     )
     header += "\n" + " " * (size_scenes + 1)
     header += " ".join(f"{str(t).rstrip('.'):^6}" for t in thresholds)
-    header += "    reg   all  num largest"
+    header += "    reg   all  num largest "
+    header += " ".join(f"{q:>5d}" for q in REPROJ_QUANTILES)
     text = [header]
 
     def render_block(
@@ -1754,7 +2194,11 @@ def create_result_table(
             row += f" {metrics.num_reg_images:6d}"
             row += f"{metrics.num_images:6d}"
             row += f" {metrics.num_components:4d}"
-            row += f"{metrics.largest_component:8d}"
+            row += f"{metrics.largest_component:8d} "
+            row += " ".join(
+                "    -" if np.isnan(q) else f"{q:>5.2f}"
+                for q in metrics.reproj_quantiles
+            )
             text.append(row)
 
     overall_scene_metrics: list[tuple[str, Metrics]] = []

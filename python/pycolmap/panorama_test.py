@@ -14,6 +14,8 @@ from .panorama import (
     PanoRenderType,
     filter_database_by_covisibility,
     get_virtual_rotations,
+    list_pano_images,
+    perspective_processor,
     run_perspective,
 )
 
@@ -116,6 +118,35 @@ def test_process_drops_alpha_for_jpeg_output(
                 atol=8,
                 rtol=0,
             )
+
+
+def test_init_from_pano_without_rendering(tmp_path: Path) -> None:
+    import PIL.Image
+
+    pano_dir = tmp_path / "panos"
+    (pano_dir / "sub").mkdir(parents=True)
+    PIL.Image.new("RGB", (16, 8)).save(pano_dir / "sub" / "b.png")
+    PIL.Image.new("RGB", (16, 8)).save(pano_dir / "a.png")
+    PIL.Image.new("RGB", (8, 8)).save(pano_dir / "square.png")
+    assert list_pano_images(pano_dir) == ["a.png", "square.png", "sub/b.png"]
+
+    output_path = tmp_path / "out"
+    processor = perspective_processor(
+        pano_dir, output_path, PanoRenderType.PERSPECTIVE_OVERLAPPING
+    )
+    assert processor.output_image_dir == output_path / "images"
+    assert processor.mask_dir == output_path / "masks"
+    assert processor.rig_config.cameras[0].camera is None
+
+    processor.init_from_pano("a.png")
+    camera = processor.rig_config.cameras[0].camera
+    assert camera is not None
+    assert (camera.width, camera.height) == (4, 4)
+    assert not output_path.exists()
+
+    processor.init_from_pano("sub/b.png")
+    with pytest.raises(ValueError):
+        processor.init_from_pano("square.png")
 
 
 def test_get_virtual_rotations() -> None:

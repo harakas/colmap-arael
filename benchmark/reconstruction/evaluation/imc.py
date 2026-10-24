@@ -181,8 +181,20 @@ class _DatasetIMC(Dataset):
         train_image_names = set(
             image.name for image in scene_info.image_path.iterdir()
         )
+        # A release may ship the images under another extension than the
+        # ground truth names them (IMC 2024: png files, jpg in sfm); the
+        # ground truth takes the on-disk name, which the reconstruction
+        # will carry.
+        train_image_names_by_stem = {
+            Path(name).stem: name for name in train_image_names
+        }
         for image in sparse_sfm.images.values():
             if image.name in train_image_names:
+                train_image_ids.add(image.image_id)
+                continue
+            on_disk = train_image_names_by_stem.get(Path(image.name).stem)
+            if on_disk is not None:
+                image.name = on_disk
                 train_image_ids.add(image.image_id)
         for camera in sparse_sfm.cameras.values():
             sparse_gt.add_camera(camera)

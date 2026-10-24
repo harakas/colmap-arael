@@ -248,6 +248,38 @@ class PanoProcessor:
         self._pano_size: tuple[int, int] | None = None
         self._rays_in_cam: npt.NDArray[np.floating] | None = None
 
+    def _set_pano_size(self, pano_width: int, pano_height: int) -> None:
+        """Create the virtual camera and its rays from the first panorama;
+        every later panorama must have the same size."""
+        if pano_width != pano_height * 2:
+            raise ValueError("Only 360° panoramas are supported.")
+
+        with self._lock:
+            if self._camera is None:
+                self._camera = create_virtual_camera(
+                    pano_width=pano_width,
+                    pano_height=pano_height,
+                    hfov_deg=self.render_options.hfov_deg,
+                    vfov_deg=self.render_options.vfov_deg,
+                )
+                for rig_camera in self.rig_config.cameras:
+                    rig_camera.camera = self._camera
+                self._pano_size = (pano_width, pano_height)
+                self._rays_in_cam = get_virtual_camera_rays(self._camera)
+            elif (pano_width, pano_height) != self._pano_size:
+                raise ValueError(
+                    "Panoramas of different sizes are not supported."
+                )
+
+    def init_from_pano(self, pano_name: str) -> None:
+        """Create the virtual camera from one panorama without rendering it,
+        so that reconstructions of earlier renders can be converted."""
+        import PIL.Image
+
+        with PIL.Image.open(self.pano_image_dir / pano_name) as pano:
+            pano_width, pano_height = pano.size
+        self._set_pano_size(pano_width, pano_height)
+
     def process(self, pano_name: str) -> None:
         import cv2
         import PIL.ExifTags
@@ -280,26 +312,9 @@ class PanoProcessor:
             logging.info(f"Skipping file {pano_path} as it cannot be read.")
             return
         pano_height, pano_width, *_ = pano_image.shape
-        if pano_width != pano_height * 2:
-            raise ValueError("Only 360° panoramas are supported.")
-
-        with self._lock:
-            if self._camera is None:  # First image, precompute rays once.
-                self._camera = create_virtual_camera(
-                    pano_width=pano_width,
-                    pano_height=pano_height,
-                    hfov_deg=self.render_options.hfov_deg,
-                    vfov_deg=self.render_options.vfov_deg,
-                )
-                for rig_camera in self.rig_config.cameras:
-                    rig_camera.camera = self._camera
-                self._pano_size = (pano_width, pano_height)
-                self._rays_in_cam = get_virtual_camera_rays(self._camera)
-            else:  # Later images, verify consistent panoramas.
-                if (pano_width, pano_height) != self._pano_size:
-                    raise ValueError(
-                        "Panoramas of different sizes are not supported."
-                    )
+        self._set_pano_size(pano_width, pano_height)
+        assert self._camera is not None
+        assert self._pano_size is not None
 
         for cam_idx, cam_from_pano_r in enumerate(self.cams_from_pano_rotation):
             assert self._rays_in_cam is not None
@@ -489,20 +504,45 @@ class PanoProcessor:
         return equirect
 
 
-def render_perspective_images(
-    pano_image_names: Sequence[str],
-    pano_image_dir: Path,
-    output_image_dir: Path,
-    mask_dir: Path,
-    render_options: PanoRenderOptions,
-    show_progress: bool,
-) -> PanoProcessor:
-    processor = PanoProcessor(
-        pano_image_dir, output_image_dir, mask_dir, render_options
+def list_pano_images(pano_image_dir: Path) -> list[str]:
+    """The panorama image names under pano_image_dir, sorted."""
+    return sorted(
+        p.relative_to(pano_image_dir).as_posix()
+        for p in pano_image_dir.rglob("*")
+        if not p.is_dir()
     )
 
+
+def perspective_processor(
+    input_image_path: Path,
+    output_path: Path,
+    render_type: PanoRenderType,
+) -> PanoProcessor:
+    """The processor that renders the panoramas under input_image_path into
+    output_path/images and output_path/masks, and converts reconstructions
+    of those renders back to equirectangular."""
+    return PanoProcessor(
+        input_image_path,
+        output_path / "images",
+        output_path / "masks",
+        PANO_RENDER_OPTIONS[render_type],
+    )
+
+
+def render_perspective_images(
+    processor: PanoProcessor,
+    pano_image_names: Sequence[str],
+    show_progress: bool,
+    num_threads: int = -1,
+) -> None:
+    processor.output_image_dir.mkdir(exist_ok=True, parents=True)
+    processor.mask_dir.mkdir(exist_ok=True, parents=True)
+
     num_panos = len(pano_image_names)
-    max_workers = max(1, min(32, (os.cpu_count() or 2) - 1))
+    if num_threads > 0:
+        max_workers = num_threads
+    else:
+        max_workers = max(1, min(32, (os.cpu_count() or 2) - 1))
 
     pbar = None
     if show_progress:
@@ -522,8 +562,6 @@ def render_perspective_images(
     finally:
         if pbar is not None:
             pbar.close()
-
-    return processor
 
 
 def run_matcher(
@@ -595,16 +633,13 @@ def filter_database_by_covisibility(
     )
 
 
-def run_spherical(
+def prepare_spherical(
     input_image_path: Path,
     options: PanoramaReconstructionOptions,
     database_path: Path,
-    rec_path: Path,
-) -> dict[int, pycolmap.Reconstruction]:
-    """Reconstruct directly on the equirectangular panoramas with the native
-    EQUIRECTANGULAR camera model, without rendering perspective images."""
-
-    logging.info("Reconstructing with spherical camera")
+) -> None:
+    """Extract features from the panoramas with the native EQUIRECTANGULAR
+    camera model and match them into database_path."""
 
     reader_options = pycolmap.ImageReaderOptions(camera_model="EQUIRECTANGULAR")
     extraction_options = pycolmap.FeatureExtractionOptions(
@@ -629,6 +664,19 @@ def run_spherical(
             options.covisibility_path,
             options.covisibility_min_shared_points,
         )
+
+
+def run_spherical(
+    input_image_path: Path,
+    options: PanoramaReconstructionOptions,
+    database_path: Path,
+    rec_path: Path,
+) -> dict[int, pycolmap.Reconstruction]:
+    """Reconstruct directly on the equirectangular panoramas with the native
+    EQUIRECTANGULAR camera model, without rendering perspective images."""
+
+    logging.info("Reconstructing with spherical camera")
+    prepare_spherical(input_image_path, options, database_path)
 
     # The EQUIRECTANGULAR model has no focal length, principal point, or
     # distortion to refine; its (w, h) params are held constant in bundle
@@ -657,46 +705,33 @@ def run_spherical(
     return recs
 
 
-def run_perspective(
+def prepare_perspective(
     input_image_path: Path,
     output_path: Path,
     options: PanoramaReconstructionOptions,
     database_path: Path,
-    rec_path: Path,
-) -> dict[int, pycolmap.Reconstruction]:
-    """Render the panoramas into a rig of perspective virtual cameras and
-    reconstruct from those."""
+) -> PanoProcessor:
+    """Render the panoramas into a rig of perspective virtual cameras, extract
+    features from the renders and match them into database_path. Returns the
+    processor that converts reconstructions of the renders back to
+    equirectangular."""
 
-    logging.info("Reconstructing with rig of perspective virtual cameras")
-
-    image_dir = output_path / "images"
-    mask_dir = output_path / "masks"
-    image_dir.mkdir(exist_ok=True, parents=True)
-    mask_dir.mkdir(exist_ok=True, parents=True)
-
-    # Search for input images.
-    pano_image_dir = input_image_path
-    pano_image_names = sorted(
-        p.relative_to(pano_image_dir).as_posix()
-        for p in pano_image_dir.rglob("*")
-        if not p.is_dir()
+    processor = perspective_processor(
+        input_image_path, output_path, options.render_type
     )
-    logging.info(f"Found {len(pano_image_names)} images in {pano_image_dir}.")
+    image_dir = processor.output_image_dir
 
-    processor = render_perspective_images(
-        pano_image_names,
-        pano_image_dir,
-        image_dir,
-        mask_dir,
-        PANO_RENDER_OPTIONS[options.render_type],
-        options.show_progress,
+    pano_image_names = list_pano_images(input_image_path)
+    logging.info(f"Found {len(pano_image_names)} images in {input_image_path}.")
+    render_perspective_images(
+        processor, pano_image_names, options.show_progress, options.num_threads
     )
     rig_config = processor.rig_config
 
     rendered_camera = rig_config.cameras[0].camera
     if rendered_camera is None:
         raise ValueError(
-            f"No panorama could be rendered from {pano_image_dir} "
+            f"No panorama could be rendered from {input_image_path} "
             f"({len(pano_image_names)} file(s) found). Check that the "
             "directory contains readable panorama images."
         )
@@ -709,7 +744,7 @@ def run_perspective(
         database_path,
         image_dir,
         reader_options=pycolmap.ImageReaderOptions(
-            mask_path=mask_dir,
+            mask_path=processor.mask_dir,
             camera_model=rendered_camera.model_name,
             camera_params=rendered_camera.params_to_string(),
         ),
@@ -735,6 +770,42 @@ def run_perspective(
             options.covisibility_min_shared_points,
             processor.split_image_name,
         )
+    return processor
+
+
+def write_equirectangular(
+    processor: PanoProcessor,
+    recs: dict[int, pycolmap.Reconstruction],
+    output_path: Path,
+) -> None:
+    """Convert reconstructions of the rendered virtual cameras back to
+    equirectangular and write them under output_path/sparse_equirectangular."""
+
+    logging.info("Converting virtual cameras back to equirectangular")
+    equirect_rec_path = output_path / "sparse_equirectangular"
+    for idx, rec in recs.items():
+        equirect_rec = processor.convert_to_equirectangular(rec)
+        model_path = equirect_rec_path / str(idx)
+        model_path.mkdir(exist_ok=True, parents=True)
+        equirect_rec.write(model_path)
+        logging.info(f"#{idx} {equirect_rec.summary()}")
+
+
+def run_perspective(
+    input_image_path: Path,
+    output_path: Path,
+    options: PanoramaReconstructionOptions,
+    database_path: Path,
+    rec_path: Path,
+) -> dict[int, pycolmap.Reconstruction]:
+    """Render the panoramas into a rig of perspective virtual cameras and
+    reconstruct from those."""
+
+    logging.info("Reconstructing with rig of perspective virtual cameras")
+    processor = prepare_perspective(
+        input_image_path, output_path, options, database_path
+    )
+    image_dir = processor.output_image_dir
 
     if options.mapper == Mapper.INCREMENTAL:
         opts = pycolmap.IncrementalPipelineOptions(
@@ -771,14 +842,7 @@ def run_perspective(
     for idx, rec in recs.items():
         logging.info(f"#{idx} {rec.summary()}")
 
-    logging.info("Converting virtual cameras back to equirectangular")
-    equirect_rec_path = output_path / "sparse_equirectangular"
-    for idx, rec in recs.items():
-        equirect_rec = processor.convert_to_equirectangular(rec)
-        model_path = equirect_rec_path / str(idx)
-        model_path.mkdir(exist_ok=True, parents=True)
-        equirect_rec.write(model_path)
-        logging.info(f"#{idx} {equirect_rec.summary()}")
+    write_equirectangular(processor, recs, output_path)
     return recs
 
 

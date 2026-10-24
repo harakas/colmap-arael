@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import argparse
+import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -44,13 +45,11 @@ def _make_scene_info(category: str, scene: str, num_images: int) -> SceneInfo:
     )
 
 
-def test_panorama_reconstruction_uses_library_api(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _panorama_scene_info(tmp_path: Path, backend: str) -> SceneInfo:
     covisibility_path = tmp_path / "covisibility.npz"
     covisibility_path.touch()
-    scene_info = SceneInfo(
-        dataset="tartanair-v2-spherical",
+    return SceneInfo(
+        dataset="tartanair-v2",
         category="test",
         scene="scene",
         num_images=2,
@@ -59,48 +58,299 @@ def test_panorama_reconstruction_uses_library_api(
         sparse_gt_path=tmp_path / "sparse_gt",
         has_camera_priors=False,
         colmap_extra_args=[],
-        reconstruction_backend="panorama-spherical",
+        reconstruction_backend=backend,
+        reconstruction_subdir=(
+            "sparse"
+            if backend == "panorama-spherical"
+            else "sparse_equirectangular"
+        ),
         covisibility_path=covisibility_path,
         covisibility_min_shared_points=1,
     )
-    args = argparse.Namespace(
+
+
+def _panorama_args(**overrides: Any) -> argparse.Namespace:
+    args = dict(
+        colmap_path="colmap",
+        overwrite_database=False,
         overwrite_reconstruction=False,
         feature="sift",
-        mapper="global",
+        mapper="incremental",
         uncalibrated=False,
         single_view_calibration=False,
         filter_covisibility=True,
         covisibility_min_shared_points=5,
         random_seed=7,
         use_gpu=False,
+        ba_backend=None,
+        ba_report=False,
     )
-    call: dict[str, Any] = {}
+    args.update(overrides)
+    return argparse.Namespace(**args)
 
-    def reconstruct(
-        input_image_path: Path, output_path: Path, options: Any
-    ) -> dict[str, Any]:
-        call.update(
-            input_image_path=input_image_path,
-            output_path=output_path,
-            options=options,
-        )
-        return {}
 
-    monkeypatch.setattr(utils.panorama, "reconstruct", reconstruct)
-    panorama_reconstruction(args, scene_info, num_threads=3, gpu_index="2")
+def test_ba_backend_args_per_command() -> None:
+    none = argparse.Namespace(ba_backend=None)
+    arael = argparse.Namespace(ba_backend="arael")
+    for command in ("automatic_reconstructor", "mapper", "global_mapper"):
+        assert utils._ba_backend_args(none, command) == []
+    assert utils._ba_backend_args(arael, "automatic_reconstructor") == [
+        "--Mapper.ba_backend=ARAEL"
+    ]
+    assert utils._ba_backend_args(arael, "mapper") == [
+        "--Mapper.ba_local_backend=ARAEL",
+        "--Mapper.ba_global_backend=ARAEL",
+    ]
+    assert utils._ba_backend_args(arael, "global_mapper") == [
+        "--GlobalMapper.ba_backend=ARAEL"
+    ]
+    with pytest.raises(ValueError):
+        utils._ba_backend_args(arael, "hierarchical_mapper")
 
-    assert call["input_image_path"] == scene_info.image_path
-    assert call["output_path"] == scene_info.workspace_path
-    options = call["options"]
-    assert options.mapper.value == "global"
-    assert options.render_type.value == "spherical"
+
+def test_colmap_reconstruction_passes_backend_and_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = argparse.Namespace(
+        colmap_path="colmap",
+        overwrite_database=False,
+        overwrite_reconstruction=False,
+        overwrite_matches=False,
+        overwrite_two_view_geometries=False,
+        use_gpu=False,
+        random_seed=3,
+        feature="sift",
+        mapper="incremental",
+        quality="high",
+        single_view_calibration=False,
+        ba_backend="arael",
+        ba_report=True,
+    )
+    workspace = tmp_path / "workspace"
+    calls = []
+
+    def run_with_log(cmd: list, log_path: Path, **kwargs: Any) -> int:
+        calls.append(([str(c) for c in cmd], log_path.name))
+        return 0
+
+    monkeypatch.setattr(utils, "_run_with_log", run_with_log)
+    monkeypatch.setattr(utils, "_database_has_verified_pairs", lambda p: True)
+
+    utils.colmap_reconstruction(
+        args,
+        workspace,
+        tmp_path / "images",
+        colmap_extra_args=["--Mapper.init_image_id1=5"],
+        num_threads=2,
+    )
+
+    assert [name for _, name in calls] == [
+        "extraction.log",
+        "reconstruction.log",
+    ]
+    cmd, _ = calls[1]
+    assert cmd[:2] == ["colmap", "automatic_reconstructor"]
+    assert "--Mapper.ba_backend=ARAEL" in cmd
+    assert "--Mapper.init_image_id1=5" in cmd
+    record_path = workspace / "ba_report.jsonl"
+    assert f"--Mapper.ba_report_path={record_path}" in cmd
+    assert cmd[cmd.index("--sparse") + 1] == "1"
+    assert (workspace / "ba_report.txt").exists()
+
+
+class _FakeProcessor:
+    def __init__(self, output_path: Path) -> None:
+        self.output_image_dir = output_path / "images"
+        self.mask_dir = output_path / "masks"
+        self.initialized_from: str | None = None
+
+    def init_from_pano(self, pano_name: str) -> None:
+        self.initialized_from = pano_name
+
+
+def test_panorama_reconstruction_maps_with_the_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scene_info = _panorama_scene_info(
+        tmp_path, "panorama-perspective_overlapping"
+    )
+    args = _panorama_args(ba_backend="arael", ba_report=True)
+    workspace = scene_info.workspace_path
+    calls: dict[str, Any] = {}
+
+    def prepare_perspective(
+        input_image_path: Path, output_path: Path, options: Any, db_path: Path
+    ) -> _FakeProcessor:
+        calls["prepare"] = (input_image_path, output_path, options, db_path)
+        return _FakeProcessor(output_path)
+
+    def run_with_log(cmd: list, log_path: Path, **kwargs: Any) -> int:
+        calls["cmd"] = [str(c) for c in cmd]
+        calls["log"] = log_path
+        calls["cwd"] = kwargs.get("cwd")
+        (workspace / "sparse" / "0").mkdir(parents=True)
+        return 0
+
+    def write_equirectangular(
+        processor: Any, recs: dict, output_path: Path
+    ) -> None:
+        calls["equirect"] = (processor, recs, output_path)
+
+    monkeypatch.setattr(
+        utils.panorama, "prepare_perspective", prepare_perspective
+    )
+    monkeypatch.setattr(
+        utils.panorama, "write_equirectangular", write_equirectangular
+    )
+    monkeypatch.setattr(utils, "_run_with_log", run_with_log)
+    monkeypatch.setattr(utils, "_database_has_verified_pairs", lambda p: False)
+    monkeypatch.setattr(
+        utils.pycolmap, "Reconstruction", lambda path: ("model", path)
+    )
+
+    panorama_reconstruction(
+        args,
+        scene_info,
+        num_threads=3,
+        gpu_index="2",
+        colmap_extra_args=["--Mapper.init_image_id1=5"],
+    )
+
+    input_path, output_path, options, database_path = calls["prepare"]
+    assert input_path == scene_info.image_path
+    assert output_path == workspace
+    assert database_path == workspace / "database.db"
+    assert options.mapper.value == "incremental"
+    assert options.render_type.value == "perspective_overlapping"
     assert options.random_seed == 7
     assert options.num_threads == 3
     assert options.gpu_index == "2"
     assert not options.use_gpu
-    assert options.covisibility_path == covisibility_path
+    assert options.covisibility_path == scene_info.covisibility_path
     assert options.covisibility_min_shared_points == 1
     assert not options.show_progress
+
+    cmd = calls["cmd"]
+    assert cmd[:2] == ["colmap", "mapper"]
+    assert cmd[cmd.index("--database_path") + 1] == str(database_path)
+    assert cmd[cmd.index("--image_path") + 1] == str(workspace / "images")
+    assert cmd[cmd.index("--output_path") + 1] == str(workspace / "sparse")
+    assert cmd[cmd.index("--Mapper.num_threads") + 1] == "3"
+    assert cmd[cmd.index("--Mapper.random_seed") + 1] == "7"
+    for name in (
+        "ba_refine_sensor_from_rig",
+        "ba_refine_focal_length",
+        "ba_refine_principal_point",
+        "ba_refine_extra_params",
+    ):
+        assert cmd[cmd.index(f"--Mapper.{name}") + 1] == "0"
+    assert "--Mapper.init_image_id1=5" in cmd
+    assert "--Mapper.ba_local_backend=ARAEL" in cmd
+    assert "--Mapper.ba_global_backend=ARAEL" in cmd
+    record_path = workspace / "ba_report.jsonl"
+    assert f"--Mapper.ba_report_path={record_path}" in cmd
+    assert calls["log"] == workspace / "reconstruction.log"
+    assert calls["cwd"] == workspace
+    assert (workspace / "ba_report.txt").exists()
+
+    processor, recs, output_path = calls["equirect"]
+    assert processor.output_image_dir == workspace / "images"
+    assert recs == {0: ("model", str(workspace / "sparse" / "0"))}
+    assert output_path == workspace
+
+
+def test_panorama_reconstruction_reuses_the_matched_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scene_info = _panorama_scene_info(
+        tmp_path, "panorama-perspective_overlapping"
+    )
+    scene_info.image_path.mkdir()
+    (scene_info.image_path / "b.png").touch()
+    (scene_info.image_path / "a.png").touch()
+    workspace = scene_info.workspace_path
+    processors = []
+
+    def perspective_processor(
+        input_image_path: Path, output_path: Path, render_type: Any
+    ) -> _FakeProcessor:
+        assert input_image_path == scene_info.image_path
+        assert render_type.value == "perspective_overlapping"
+        processors.append(_FakeProcessor(output_path))
+        return processors[-1]
+
+    def run_with_log(cmd: list, log_path: Path, **kwargs: Any) -> int:
+        (workspace / "sparse" / "0").mkdir(parents=True)
+        return 0
+
+    monkeypatch.setattr(
+        utils.panorama, "perspective_processor", perspective_processor
+    )
+    monkeypatch.setattr(
+        utils.panorama,
+        "prepare_perspective",
+        lambda *a: pytest.fail("the matched database must be reused"),
+    )
+    monkeypatch.setattr(
+        utils.panorama, "write_equirectangular", lambda *a: None
+    )
+    monkeypatch.setattr(utils, "_run_with_log", run_with_log)
+    monkeypatch.setattr(utils, "_database_has_verified_pairs", lambda p: True)
+    monkeypatch.setattr(utils.pycolmap, "Reconstruction", lambda path: path)
+
+    panorama_reconstruction(
+        _panorama_args(), scene_info, num_threads=1, gpu_index="-1"
+    )
+
+    assert len(processors) == 1
+    assert processors[0].initialized_from == "a.png"
+
+
+def test_panorama_reconstruction_spherical_global(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scene_info = _panorama_scene_info(tmp_path, "panorama-spherical")
+    args = _panorama_args(mapper="global", ba_backend="arael")
+    workspace = scene_info.workspace_path
+    calls: dict[str, Any] = {}
+
+    def prepare_spherical(
+        input_image_path: Path, options: Any, database_path: Path
+    ) -> None:
+        calls["prepare"] = (
+            input_image_path,
+            options.render_type.value,
+            database_path,
+        )
+
+    def run_with_log(cmd: list, log_path: Path, **kwargs: Any) -> int:
+        calls["cmd"] = [str(c) for c in cmd]
+        return 0
+
+    monkeypatch.setattr(utils.panorama, "prepare_spherical", prepare_spherical)
+    monkeypatch.setattr(
+        utils.panorama,
+        "write_equirectangular",
+        lambda *a: pytest.fail("spherical models are not converted"),
+    )
+    monkeypatch.setattr(utils, "_run_with_log", run_with_log)
+    monkeypatch.setattr(utils, "_database_has_verified_pairs", lambda p: False)
+
+    panorama_reconstruction(args, scene_info, num_threads=2, gpu_index="-1")
+
+    assert calls["prepare"] == (
+        scene_info.image_path,
+        "spherical",
+        workspace / "database.db",
+    )
+    cmd = calls["cmd"]
+    assert cmd[:2] == ["colmap", "global_mapper"]
+    assert cmd[cmd.index("--image_path") + 1] == str(scene_info.image_path)
+    assert cmd[cmd.index("--GlobalMapper.num_threads") + 1] == "2"
+    assert cmd[cmd.index("--GlobalMapper.random_seed") + 1] == "7"
+    assert "--GlobalMapper.ba_backend=ARAEL" in cmd
+    assert not any("refine" in c for c in cmd)
+    assert not any("ba_report_path" in c for c in cmd)
 
 
 def test_panorama_reconstruction_rejects_calibration(tmp_path: Path) -> None:
@@ -117,6 +367,7 @@ def test_panorama_reconstruction_rejects_calibration(tmp_path: Path) -> None:
         reconstruction_backend="panorama-spherical",
     )
     args = argparse.Namespace(
+        overwrite_database=False,
         overwrite_reconstruction=False,
         feature="sift",
         mapper="global",
@@ -148,6 +399,7 @@ def test_learned_calibration_disables_gt_camera_priors(
         uncalibrated=False,
         single_view_calibration=True,
         filter_covisibility=False,
+        colmap_extra_args=[],
     )
 
     dataset: Any = argparse.Namespace(
@@ -1248,3 +1500,71 @@ class TestComputeGroupedAbsErrors:
         # Remaining cluster 1 credited by sub_model_1.
         for name in names[two_thirds:]:
             np.testing.assert_allclose(error_by_name[name], 0.0, atol=1e-10)
+
+
+class TestSummarizeBaReport:
+    def test_summary_lists_backends_terminations_and_phases(
+        self, tmp_path: Path
+    ) -> None:
+        record_path = tmp_path / "ba_report.jsonl"
+        record_path.write_text(
+            '{"backend": "arael", "site": "local", "residuals": 100, '
+            '"iterations": 3, "accepted": 3, "time": 0.5, '
+            '"termination": "converged", '
+            '"timing": {"total": 0.4, "assembly": 0.1, "analysis": 0.05, '
+            '"linear_solve": 0.2, "cost": 0.03, "advance": 0.02}}\n'
+            '{"backend": "arael", "site": "global", "residuals": 2000, '
+            '"iterations": 75, "accepted": 43, "time": 4.0, '
+            '"termination": "hit max_iters", '
+            '"timing": {"total": 3.9, "assembly": 1.0, "analysis": 0.1, '
+            '"linear_solve": 2.5, "cost": 0.2, "advance": 0.1}}\n'
+            '{"backend": "ceres", "site": "global", "residuals": 2000, '
+            '"iterations": 10, "accepted": 8, "time": 6.0, '
+            '"termination": "CONVERGENCE"}\n'
+        )
+        summary = utils.summarize_ba_report(record_path)
+        assert "3 bundle adjustments recorded" in summary
+        # Per call site: the arael global solve alone, and its time.
+        assert re.search(r"arael\s+global\s+1\s+75\s+4\.0\s+2000", summary)
+        assert re.search(r"arael\s+local\s+1\s+3\s+0\.5\s+100", summary)
+        # The one solve that did not converge is listed with its site.
+        assert (
+            "arael global 2000 residuals, 75 iterations, 4.00 s: hit max_iters"
+            in summary
+        )
+        assert re.search(
+            r"arael\s+2\s+78\s+46\s+4\.5\s+39\.0\s+75\s+2000", summary
+        )
+        assert re.search(
+            r"ceres\s+1\s+10\s+8\s+6\.0\s+10\.0\s+10\s+2000", summary
+        )
+        assert "arael hit max_iters 1" in summary
+        assert "ceres CONVERGENCE 1" in summary
+        assert "linear solve 2.7 (63%)" in summary
+        assert "slowest solve: ceres 2000 residuals, 10 iterations, 6.0 s" in (
+            summary
+        )
+
+    def test_non_finite_values_are_listed(self, tmp_path: Path) -> None:
+        record_path = tmp_path / "ba_report.jsonl"
+        record_path.write_text(
+            '{"backend": "arael", "site": "local", "residuals": 4402, '
+            '"iterations": 30, "accepted": 30, "time": 0.5, '
+            '"initial_cost": null, "final_cost": 6368.5, '
+            '"termination": "hit max_iters", '
+            '"timing": {"total": 0.4, "assembly": null, "analysis": 0.05, '
+            '"linear_solve": 0.2, "cost": 0.03, "advance": 0.02}}\n'
+            '{"backend": "arael", "site": "global", "residuals": 2000, '
+            '"iterations": 3, "accepted": 3, "time": 1.0, '
+            '"initial_cost": 10.0, "final_cost": 9.0, '
+            '"termination": "converged"}\n'
+        )
+        summary = utils.summarize_ba_report(record_path)
+        assert "arael local 4402 residuals: non-finite initial_cost" in summary
+        assert "2000 residuals: non-finite" not in summary
+        assert re.search(r"arael\s+2\s+33\s+33\s+1\.5", summary)
+
+    def test_missing_or_empty_record_file(self, tmp_path: Path) -> None:
+        assert "no bundle adjustment records" in utils.summarize_ba_report(
+            tmp_path / "none.jsonl"
+        )
