@@ -107,7 +107,7 @@ class AutomaticReconstructionController : public Thread {
     std::string gpu_index = "-1";
 
     // Bundle adjustment solver backend for local and global BA.
-    BundleAdjustmentBackend ba_backend = BundleAdjustmentBackend::CERES;
+    BundleAdjustmentBackend ba_backend = DefaultBundleAdjustmentBackend();
 
     // The incremental mapper's options, applied on top of the data type
     // and quality presets; the options above still win where they

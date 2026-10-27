@@ -13,6 +13,14 @@
 
 namespace colmap {
 
+BundleAdjustmentBackend DefaultBundleAdjustmentBackend() {
+#ifdef ARAEL_ENABLED
+  return BundleAdjustmentBackend::ARAEL;
+#else
+  return BundleAdjustmentBackend::CERES;
+#endif
+}
+
 bool BundleAdjustmentSummary::IsSolutionUsable() const {
   return termination_type == BundleAdjustmentTerminationType::CONVERGENCE ||
          termination_type == BundleAdjustmentTerminationType::NO_CONVERGENCE ||
@@ -427,15 +435,27 @@ std::unique_ptr<BundleAdjuster> CreatePosePriorBundleAdjuster(
              "CASPAR_ENABLED; rebuild with -DCASPAR_ENABLED=ON to use it";
 #endif
       return nullptr;
-    case BundleAdjustmentBackend::ARAEL:
+    case BundleAdjustmentBackend::ARAEL: {
 #ifdef ARAEL_ENABLED
-      LOG(FATAL_THROW) << "arael BA backend does not support pose priors";
+      // arael has no pose priors and is the default backend in this build,
+      // so pose prior bundle adjustment runs on Ceres.
+      LOG_FIRST_N(WARNING, 1) << "arael BA backend does not support pose "
+                                 "priors; pose prior bundle adjustment "
+                                 "runs on Ceres";
+      BundleAdjustmentOptions ceres_options = options;
+      ceres_options.backend = BundleAdjustmentBackend::CERES;
+      return CreatePosePriorCeresBundleAdjuster(ceres_options,
+                                                prior_options,
+                                                config,
+                                                std::move(pose_priors),
+                                                reconstruction);
 #else
       LOG(FATAL_THROW)
           << "arael BA backend selected but COLMAP was built without "
              "ARAEL_ENABLED; rebuild with -DARAEL_ENABLED=ON to use it";
-#endif
       return nullptr;
+#endif
+    }
   }
   LOG(FATAL_THROW) << "Unknown bundle adjustment backend: "
                    << static_cast<int>(options.backend);

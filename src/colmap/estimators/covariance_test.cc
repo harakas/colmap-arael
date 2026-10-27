@@ -79,8 +79,10 @@ TEST_P(ParameterizedBACovarianceTests, CompareWithCeres) {
     }
   }
 
-  std::unique_ptr<BundleAdjuster> bundle_adjuster = CreateDefaultBundleAdjuster(
-      BundleAdjustmentOptions(), config, reconstruction);
+  BundleAdjustmentOptions ba_options;
+  ba_options.backend = BundleAdjustmentBackend::CERES;
+  std::unique_ptr<BundleAdjuster> bundle_adjuster =
+      CreateDefaultBundleAdjuster(ba_options, config, reconstruction);
   const auto summary = bundle_adjuster->Solve();
   ASSERT_TRUE(summary->IsSolutionUsable());
 

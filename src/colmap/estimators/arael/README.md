@@ -2,8 +2,8 @@
 
 A bundle adjustment backend for COLMAP on [arael](https://crates.io/crates/arael),
 a Levenberg-Marquardt solver with a Schur reduction and a supernodal
-sparse Cholesky factorization, selected with
-`--BundleAdjustment.backend ARAEL`. It solves the incremental mapper's
+sparse Cholesky factorization, and the default backend of a build with
+`ARAEL_ENABLED`. It solves the incremental mapper's
 local and global bundle adjustments and the `bundle_adjuster` command
 on the same problem the Ceres backend solves: the 2-row reprojection
 residual under COLMAP's loss functions, the camera models below, rigs
@@ -11,7 +11,7 @@ with their sensor-from-rig poses, COLMAP's constant-parameter and
 gauge-fixing settings. A registration's pose refinement
 (`RefineAbsolutePose`) and the pose-prior bundle adjuster stay with
 Ceres; the structure-less registration's bundle adjustment follows the
-backend. The Ceres backend remains the default.
+backend.
 
 The backend is a model crate (`src/lib.rs`), from which arael's build
 tool generates a C library and a C++ interface (`capi/`, `cxx/`, both
@@ -46,11 +46,19 @@ cargo-arael 0.9.3 or later).
 
 ## Using it
 
-Command line, with the mapper or the `bundle_adjuster` command:
+With `ARAEL_ENABLED`, every backend option defaults to `ARAEL`
+(`DefaultBundleAdjustmentBackend()`). Ceres on the command line:
 
 ```
-colmap mapper ... --BundleAdjustment.backend ARAEL
+colmap mapper ... --Mapper.ba_local_backend CERES --Mapper.ba_global_backend CERES
+colmap bundle_adjuster ... --BundleAdjustment.backend CERES
+colmap automatic_reconstructor ... --Mapper.ba_backend ceres
+colmap global_mapper ... --GlobalMapper.ba_backend CERES
 ```
+
+In the GUI, the backend selectors (automatic reconstruction, bundle
+adjustment, the mapper's local and global backend) list the backends
+built in.
 
 The backend's options:
 
@@ -72,8 +80,8 @@ The backend's options:
 In pycolmap the same options are `BundleAdjustmentOptions.backend`
 (`pycolmap.BundleAdjustmentBackend.ARAEL`) and
 `BundleAdjustmentOptions.arael` (`pycolmap.AraelBundleAdjustmentOptions`);
-for the mapper, `IncrementalPipelineOptions.ba_backend` and
-`IncrementalPipelineOptions.ba_arael`, which it passes to every solve
+for the mapper, `IncrementalPipelineOptions.ba_local_backend`,
+`ba_global_backend` and `ba_arael`, which it passes to every solve
 with its own iteration caps and thread count.
 
 **Records.** `--BundleAdjustment.report_path <file>` appends one JSON
@@ -85,7 +93,8 @@ takes `--ba_backend arael` and `--ba_report`.
 **Camera models:** SIMPLE_PINHOLE, PINHOLE, SIMPLE_RADIAL, RADIAL,
 OPENCV, FULL_OPENCV, OPENCV_FISHEYE, THIN_PRISM_FISHEYE and
 RAD_TAN_THIN_PRISM_FISHEYE. Creating an adjuster over another model
-fails with a message naming the camera.
+fails with a message naming the camera; such a reconstruction runs with
+the Ceres flags above.
 
 **Where the two backends differ.** arael's stop criterion is a
 relative cost decrease (`rel_precision`, 1e-6); the mapper runs Ceres

@@ -34,6 +34,10 @@ MAKE_ENUM_CLASS_OVERLOAD_STREAM(BundleAdjustmentTerminationType,
 MAKE_ENUM_CLASS_OVERLOAD_STREAM(
     BundleAdjustmentBackend, 0, CERES, CASPAR, ARAEL);
 
+// The backend the options default to: ARAEL when COLMAP is built with
+// ARAEL_ENABLED, else CERES.
+BundleAdjustmentBackend DefaultBundleAdjustmentBackend();
+
 // Summary of bundle adjustment results, independent of solver backend.
 struct BundleAdjustmentSummary {
   BundleAdjustmentTerminationType termination_type =
@@ -190,7 +194,7 @@ struct BundleAdjustmentOptions : public BundleAdjustmentBackendOptions {
   std::string report_site;
 
   // Solver backend to use for bundle adjustment.
-  BundleAdjustmentBackend backend = BundleAdjustmentBackend::CERES;
+  BundleAdjustmentBackend backend = DefaultBundleAdjustmentBackend();
 
   // Optional cooperative cancellation callback. Ceres evaluates this after
   // each iteration. Other backends may only evaluate it between solver runs.

@@ -136,7 +136,7 @@ class IncrementalMapper {
     // pose refinement (a bundle adjustment) and the record file it
     // appends to (BundleAdjustmentOptions::report_path); the pipeline
     // fills them from the local bundle adjustment's.
-    BundleAdjustmentBackend abs_pose_backend = BundleAdjustmentBackend::CERES;
+    BundleAdjustmentBackend abs_pose_backend = DefaultBundleAdjustmentBackend();
     std::shared_ptr<AraelBundleAdjustmentOptions> abs_pose_arael;
     std::string ba_report_path;
 

@@ -61,10 +61,12 @@ TEST(IncrementalPipeline, WithoutNoiseSphericalCameras) {
   SynthesizeDataset(
       synthetic_dataset_options, &gt_reconstruction, database.get());
 
+  // arael has no equirectangular camera model.
+  auto options = std::make_shared<IncrementalPipelineOptions>();
+  options->ba_local_backend = BundleAdjustmentBackend::CERES;
+  options->ba_global_backend = BundleAdjustmentBackend::CERES;
   auto reconstruction_manager = std::make_shared<ReconstructionManager>();
-  IncrementalPipeline mapper(std::make_shared<IncrementalPipelineOptions>(),
-                             database,
-                             reconstruction_manager);
+  IncrementalPipeline mapper(options, database, reconstruction_manager);
   mapper.Run();
 
   ASSERT_EQ(reconstruction_manager->Size(), 1);
@@ -758,6 +760,8 @@ TEST(IncrementalPipelineOptions, EffBaMaxNumIterations) {
   const int arael_default = AraelBundleAdjustmentOptions().max_num_iterations;
 
   // Sentinel resolves to the configured backend's default.
+  options.ba_local_backend = BundleAdjustmentBackend::CERES;
+  options.ba_global_backend = BundleAdjustmentBackend::CERES;
   EXPECT_EQ(options.EffBaLocalMaxNumIterations(), 25);
   EXPECT_EQ(options.EffBaGlobalMaxNumIterations(), 50);
   options.ba_local_backend = BundleAdjustmentBackend::CASPAR;

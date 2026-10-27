@@ -66,7 +66,9 @@ int RunAutomaticReconstructor(int argc, char** argv) {
   std::string feature = "sift";
   std::string mapper = "incremental";
   std::string mesher = "poisson";
-  std::string ba_backend = "ceres";
+  std::string ba_backend(
+      BundleAdjustmentBackendToString(DefaultBundleAdjustmentBackend()));
+  StringToLower(&ba_backend);
 
   OptionManager options;
   options.AddRequiredOption("workspace_path",

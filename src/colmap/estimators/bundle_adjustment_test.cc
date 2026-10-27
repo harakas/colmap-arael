@@ -126,6 +126,16 @@ TEST(BundleAdjustmentSummary, IsSolutionUsable) {
   EXPECT_FALSE(summary.IsSolutionUsable());
 }
 
+TEST(BundleAdjustmentOptions, DefaultBackend) {
+#ifdef ARAEL_ENABLED
+  EXPECT_EQ(DefaultBundleAdjustmentBackend(), BundleAdjustmentBackend::ARAEL);
+#else
+  EXPECT_EQ(DefaultBundleAdjustmentBackend(), BundleAdjustmentBackend::CERES);
+#endif
+  EXPECT_EQ(BundleAdjustmentOptions().backend,
+            DefaultBundleAdjustmentBackend());
+}
+
 TEST(BundleAdjustmentConfig, NumResiduals) {
   Reconstruction reconstruction;
   SyntheticDatasetOptions synthetic_dataset_options;
@@ -905,6 +915,49 @@ TEST_P(PosePriorBundleAdjusterBackendTest, Nominal) {
 INSTANTIATE_TEST_SUITE_P(PosePriorBundleAdjusterBackends,
                          PosePriorBundleAdjusterBackendTest,
                          ::testing::Values(BundleAdjustmentBackend::CERES));
+
+#ifdef ARAEL_ENABLED
+TEST(PosePriorBundleAdjuster, AraelRunsOnCeres) {
+  Reconstruction gt_reconstruction;
+  SyntheticDatasetOptions synthetic_dataset_options;
+  synthetic_dataset_options.num_rigs = 1;
+  synthetic_dataset_options.num_cameras_per_rig = 1;
+  synthetic_dataset_options.num_frames_per_rig = 7;
+  synthetic_dataset_options.num_points3D = 100;
+  synthetic_dataset_options.prior_position = true;
+  const auto database_path = CreateTestDir() / "database.db";
+  auto database = Database::Open(database_path);
+  SynthesizeDataset(
+      synthetic_dataset_options, &gt_reconstruction, database.get());
+
+  Reconstruction reconstruction = gt_reconstruction;
+  SyntheticNoiseOptions synthetic_noise_options;
+  synthetic_noise_options.point2D_stddev = 0.5;
+  synthetic_noise_options.prior_position_stddev = 0.05;
+  SynthesizeNoise(synthetic_noise_options, &reconstruction);
+
+  BundleAdjustmentConfig config;
+  for (const frame_t frame_id : reconstruction.RegFrameIds()) {
+    for (const data_t& data_id : reconstruction.Frame(frame_id).ImageIds()) {
+      config.AddImage(data_id.id);
+    }
+  }
+
+  BundleAdjustmentOptions options;
+  options.backend = BundleAdjustmentBackend::ARAEL;
+  PosePriorBundleAdjustmentOptions prior_options;
+  prior_options.alignment_ransac_options.random_seed = 0;
+
+  std::unique_ptr<BundleAdjuster> bundle_adjuster =
+      CreatePosePriorBundleAdjuster(options,
+                                    prior_options,
+                                    config,
+                                    database->ReadAllPosePriors(),
+                                    reconstruction);
+  EXPECT_EQ(bundle_adjuster->Options().backend, BundleAdjustmentBackend::CERES);
+  EXPECT_TRUE(bundle_adjuster->Solve()->IsSolutionUsable());
+}
+#endif
 
 }  // namespace
 }  // namespace colmap

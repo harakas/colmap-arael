@@ -117,10 +117,10 @@ struct IncrementalPipelineOptions {
   std::string ba_gpu_index = "-1";
 
   // Bundle adjustment solver backend for local bundle adjustment.
-  BundleAdjustmentBackend ba_local_backend = BundleAdjustmentBackend::CERES;
+  BundleAdjustmentBackend ba_local_backend = DefaultBundleAdjustmentBackend();
 
   // Bundle adjustment solver backend for global bundle adjustment.
-  BundleAdjustmentBackend ba_global_backend = BundleAdjustmentBackend::CERES;
+  BundleAdjustmentBackend ba_global_backend = DefaultBundleAdjustmentBackend();
 
   // Path of a file every bundle adjustment appends one line of JSON to
   // (BundleAdjustmentOptions::report_path). Empty for none.
