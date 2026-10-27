@@ -68,6 +68,7 @@ AutomaticReconstructionWidget::AutomaticReconstructionWidget(
   ba_backend_cb_ = new QComboBox(this);
   ba_backend_cb_->addItem("CERES");
   ba_backend_cb_->addItem("CASPAR");
+  ba_backend_cb_->addItem("ARAEL");
   ba_backend_cb_->setCurrentIndex(static_cast<int>(options_.ba_backend));
   AddWidgetRow("Backend", ba_backend_cb_);
 #endif

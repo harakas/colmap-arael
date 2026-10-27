@@ -2,6 +2,7 @@
 
 #include "colmap/estimators/bundle_adjustment.h"
 
+#include "colmap/estimators/bundle_adjustment_arael.h"
 #include "colmap/estimators/bundle_adjustment_caspar.h"
 #include "colmap/estimators/bundle_adjustment_ceres.h"
 
@@ -104,6 +105,25 @@ void BindBundleAdjuster(py::module& m) {
   MakeDataclass(PyCasparBundleAdjustmentSummary);
 #endif
 
+#ifdef ARAEL_ENABLED
+  using AraelBASummary = AraelBundleAdjustmentSummary;
+  auto PyAraelBundleAdjustmentSummary =
+      py::classh<AraelBASummary, BASummary>(m, "AraelBundleAdjustmentSummary")
+          .def(py::init<>())
+          .def_readwrite("num_effective_parameters",
+                         &AraelBASummary::num_effective_parameters)
+          .def_readwrite("num_iterations", &AraelBASummary::num_iterations)
+          .def_readwrite("num_accepted_iterations",
+                         &AraelBASummary::num_accepted_iterations)
+          .def_readwrite("initial_cost", &AraelBASummary::initial_cost)
+          .def_readwrite("final_cost", &AraelBASummary::final_cost)
+          .def_readwrite("termination_reason",
+                         &AraelBASummary::termination_reason)
+          .def_readwrite("linear_solver", &AraelBASummary::linear_solver)
+          .def_readwrite("loss", &AraelBASummary::loss);
+  MakeDataclass(PyAraelBundleAdjustmentSummary);
+#endif
+
   auto PyBundleAdjustmentGauge =
       py::enum_<BundleAdjustmentGauge>(m, "BundleAdjustmentGauge")
           .value("UNSPECIFIED", BundleAdjustmentGauge::UNSPECIFIED)
@@ -115,7 +135,8 @@ void BindBundleAdjuster(py::module& m) {
   auto PyBundleAdjustmentBackend =
       py::enum_<BundleAdjustmentBackend>(m, "BundleAdjustmentBackend")
           .value("CERES", BundleAdjustmentBackend::CERES)
-          .value("CASPAR", BundleAdjustmentBackend::CASPAR);
+          .value("CASPAR", BundleAdjustmentBackend::CASPAR)
+          .value("ARAEL", BundleAdjustmentBackend::ARAEL);
   AddStringToEnumConstructor(PyBundleAdjustmentBackend);
 
   using BACfg = BundleAdjustmentConfig;
@@ -310,6 +331,109 @@ void BindBundleAdjuster(py::module& m) {
                          "Which GPU to use for solving the problem.");
   MakeDataclass(PyCasparBundleAdjustmentOptions);
 
+  // arael-specific bundle adjustment options
+  auto PyAraelBundleAdjustmentPreset =
+      py::enum_<AraelBundleAdjustmentPreset>(m, "AraelBundleAdjustmentPreset")
+          .value("DEFAULTS", AraelBundleAdjustmentPreset::DEFAULTS)
+          .value("CONSERVATIVE", AraelBundleAdjustmentPreset::CONSERVATIVE)
+          .value("WELL_CONDITIONED",
+                 AraelBundleAdjustmentPreset::WELL_CONDITIONED)
+          .value("ILL_CONDITIONED",
+                 AraelBundleAdjustmentPreset::ILL_CONDITIONED);
+  AddStringToEnumConstructor(PyAraelBundleAdjustmentPreset);
+
+  auto PyAraelSchurPolicy = py::enum_<AraelSchurPolicy>(m, "AraelSchurPolicy")
+                                .value("AUTO", AraelSchurPolicy::AUTO)
+                                .value("FORCE", AraelSchurPolicy::FORCE)
+                                .value("NEVER", AraelSchurPolicy::NEVER);
+  AddStringToEnumConstructor(PyAraelSchurPolicy);
+
+  auto PyAraelSchurSolve =
+      py::enum_<AraelSchurSolve>(m, "AraelSchurSolve")
+          .value("FACTORIZE", AraelSchurSolve::FACTORIZE)
+          .value("ITERATIVE", AraelSchurSolve::ITERATIVE)
+          .value("ITERATIVE_IMPLICIT", AraelSchurSolve::ITERATIVE_IMPLICIT);
+  AddStringToEnumConstructor(PyAraelSchurSolve);
+
+  auto PyAraelOrdering =
+      py::enum_<AraelOrdering>(m, "AraelOrdering")
+          .value("AUTO", AraelOrdering::AUTO)
+          .value("AMD", AraelOrdering::AMD)
+          .value("MARGINALIZE_FIRST", AraelOrdering::MARGINALIZE_FIRST)
+          .value("NATURAL", AraelOrdering::NATURAL)
+          .value("NESTED_DISSECTION", AraelOrdering::NESTED_DISSECTION);
+  AddStringToEnumConstructor(PyAraelOrdering);
+
+  auto PyAraelRouteMode = py::enum_<AraelRouteMode>(m, "AraelRouteMode")
+                              .value("AUTO", AraelRouteMode::AUTO)
+                              .value("ALWAYS", AraelRouteMode::ALWAYS)
+                              .value("NEVER", AraelRouteMode::NEVER);
+  AddStringToEnumConstructor(PyAraelRouteMode);
+
+  auto PyAraelDriver = py::enum_<AraelDriver>(m, "AraelDriver")
+                           .value("PRESET", AraelDriver::PRESET)
+                           .value("NIELSEN", AraelDriver::NIELSEN);
+  AddStringToEnumConstructor(PyAraelDriver);
+
+  using AraelBAOpts = AraelBundleAdjustmentOptions;
+  auto PyAraelBundleAdjustmentOptions =
+      py::classh<AraelBAOpts>(m, "AraelBundleAdjustmentOptions")
+          .def(py::init<>())
+          .def_readwrite("preset",
+                         &AraelBAOpts::preset,
+                         "Damping and termination preset of arael's LM.")
+          .def_readwrite("driver",
+                         &AraelBAOpts::driver,
+                         "The damping schedule on top of the preset: the "
+                         "preset's own, or Nielsen's gain-ratio driver "
+                         "(the default).")
+          .def_readwrite("initial_lambda",
+                         &AraelBAOpts::initial_lambda,
+                         "Initial LM damping; a non-positive value keeps "
+                         "the preset's.")
+          .def_readwrite("max_num_iterations",
+                         &AraelBAOpts::max_num_iterations,
+                         "Maximum number of LM iterations.")
+          .def_readwrite("num_threads",
+                         &AraelBAOpts::num_threads,
+                         "Threads for every stage of the solve; -1 uses "
+                         "every core.")
+          .def_readwrite("rel_precision",
+                         &AraelBAOpts::rel_precision,
+                         "Relative cost improvement below which an accepted "
+                         "step counts as small; a non-positive value keeps "
+                         "the preset's.")
+          .def_readwrite("min_diagonal",
+                         &AraelBAOpts::min_diagonal,
+                         "Floor under the damping scale of a parameter with "
+                         "no curvature, so it stays put instead of ending "
+                         "the solve; non-positive leaves the floor off.")
+          .def_readwrite("schur_policy",
+                         &AraelBAOpts::schur_policy,
+                         "Whether each step eliminates the points before "
+                         "factorizing: AUTO by analysis, FORCE, NEVER.")
+          .def_readwrite("schur_solve",
+                         &AraelBAOpts::schur_solve,
+                         "How the reduced camera system is solved: "
+                         "factorized, or conjugate gradients on the "
+                         "assembled or the implicit reduced system.")
+          .def_readwrite("max_cg_iterations",
+                         &AraelBAOpts::max_cg_iterations,
+                         "Iteration cap of the conjugate-gradient solves.")
+          .def_readwrite("ordering",
+                         &AraelBAOpts::ordering,
+                         "Elimination ordering of the factorized system.")
+          .def_readwrite("block_supernodal",
+                         &AraelBAOpts::block_supernodal,
+                         "The supernodal block Cholesky for the reduced "
+                         "system: by analysis, always, never.")
+          .def_readwrite("envelope",
+                         &AraelBAOpts::envelope,
+                         "The envelope (banded) factorization of the reduced "
+                         "system: by analysis, always, never.")
+          .def("check", &AraelBAOpts::Check);
+  MakeDataclass(PyAraelBundleAdjustmentOptions);
+
   // Solver-agnostic bundle adjustment options
   using BAOpts = BundleAdjustmentOptions;
   auto PyBundleAdjustmentOptions =
@@ -360,6 +484,9 @@ void BindBundleAdjuster(py::module& m) {
           .def_readwrite("caspar",
                          &BAOpts::caspar,
                          "Caspar-specific bundle adjustment options.")
+          .def_readwrite("arael",
+                         &BAOpts::arael,
+                         "arael-specific bundle adjustment options.")
           .def("check", &BAOpts::Check);
   MakeDataclass(PyBundleAdjustmentOptions);
 

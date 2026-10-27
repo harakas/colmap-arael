@@ -3,6 +3,7 @@
 #include "colmap/sfm/incremental_mapper.h"
 
 #include "colmap/estimators/bundle_adjustment.h"
+#include "colmap/estimators/bundle_adjustment_arael.h"
 #include "colmap/estimators/bundle_adjustment_ceres.h"
 #include "colmap/estimators/generalized_pose.h"
 #include "colmap/estimators/pose.h"
@@ -751,6 +752,12 @@ bool IncrementalMapper::RegisterNextStructureLessImage(const Options& options,
   }
   abs_pose_refinement_options.print_summary = false;
   abs_pose_refinement_options.backend = options.abs_pose_backend;
+  if (abs_pose_refinement_options.arael) {
+    if (options.abs_pose_arael) {
+      *abs_pose_refinement_options.arael = *options.abs_pose_arael;
+    }
+    abs_pose_refinement_options.arael->num_threads = options.num_threads;
+  }
   abs_pose_refinement_options.report_path = options.ba_report_path;
   abs_pose_refinement_options.report_site = "pose";
   if (reg_stats_.num_reg_images_per_camera[image.CameraId()] > 0) {
@@ -1109,6 +1116,10 @@ bool IncrementalMapper::AdjustGlobalBundle(
     custom_ba_options.ceres->solver_options.parameter_tolerance /= 10;
     custom_ba_options.ceres->solver_options.max_num_iterations *= 2;
     custom_ba_options.ceres->solver_options.max_linear_solver_iterations = 200;
+  }
+  if (is_small_reconstruction && custom_ba_options.arael) {
+    custom_ba_options.arael->rel_precision /= 10;
+    custom_ba_options.arael->max_num_iterations *= 2;
   }
 
   // Avoid degeneracies in bundle adjustment.

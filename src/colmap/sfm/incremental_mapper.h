@@ -132,11 +132,12 @@ class IncrementalMapper {
     // PRNG seed for all stochastic methods during reconstruction.
     int random_seed = -1;
 
-    // The backend of the structure-less registration's pose refinement
-    // (a bundle adjustment) and the record file it appends to
-    // (BundleAdjustmentOptions::report_path); the pipeline fills them
-    // from the local bundle adjustment's.
+    // The backend and arael options of the structure-less registration's
+    // pose refinement (a bundle adjustment) and the record file it
+    // appends to (BundleAdjustmentOptions::report_path); the pipeline
+    // fills them from the local bundle adjustment's.
     BundleAdjustmentBackend abs_pose_backend = BundleAdjustmentBackend::CERES;
+    std::shared_ptr<AraelBundleAdjustmentOptions> abs_pose_arael;
     std::string ba_report_path;
 
     // Method to find and select next best image to register.

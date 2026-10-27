@@ -3,6 +3,7 @@
 #include "colmap/controllers/incremental_pipeline.h"
 
 #include "colmap/estimators/alignment.h"
+#include "colmap/estimators/bundle_adjustment_arael.h"
 #include "colmap/estimators/bundle_adjustment_caspar.h"
 #include "colmap/estimators/bundle_adjustment_ceres.h"
 #include "colmap/scene/database.h"
@@ -158,6 +159,7 @@ IncrementalMapper::Options IncrementalPipelineOptions::Mapper() const {
   // adjustment: it solves through the local one's backend and joins its
   // record.
   options.abs_pose_backend = ba_local_backend;
+  options.abs_pose_arael = ba_arael;
   options.ba_report_path = ba_report_path;
   return options;
 }
@@ -212,6 +214,15 @@ BundleAdjustmentOptions IncrementalPipelineOptions::LocalBundleAdjustment()
     }
     options.caspar->gpu_index = ba_gpu_index;
   }
+  if (options.arael) {
+    if (ba_arael) {
+      *options.arael = *ba_arael;
+    }
+    if (ba_local_max_num_iterations >= 0) {
+      options.arael->max_num_iterations = ba_local_max_num_iterations;
+    }
+    options.arael->num_threads = num_threads;
+  }
   options.report_path = ba_report_path;
   options.report_site = "local";
   return options;
@@ -261,6 +272,15 @@ BundleAdjustmentOptions IncrementalPipelineOptions::GlobalBundleAdjustment()
     }
     options.caspar->gpu_index = ba_gpu_index;
   }
+  if (options.arael) {
+    if (ba_arael) {
+      *options.arael = *ba_arael;
+    }
+    if (ba_global_max_num_iterations >= 0) {
+      options.arael->max_num_iterations = ba_global_max_num_iterations;
+    }
+    options.arael->num_threads = num_threads;
+  }
   options.report_path = ba_report_path;
   options.report_site = "global";
   return options;
@@ -273,6 +293,9 @@ int IncrementalPipelineOptions::EffBaLocalMaxNumIterations() const {
   if (ba_local_backend == BundleAdjustmentBackend::CASPAR) {
     return CasparBundleAdjustmentOptions().solver_iter_max;
   }
+  if (ba_local_backend == BundleAdjustmentBackend::ARAEL) {
+    return AraelBundleAdjustmentOptions().max_num_iterations;
+  }
   return kDefaultCeresLocalMaxNumIterations;
 }
 
@@ -282,6 +305,9 @@ int IncrementalPipelineOptions::EffBaGlobalMaxNumIterations() const {
   }
   if (ba_global_backend == BundleAdjustmentBackend::CASPAR) {
     return CasparBundleAdjustmentOptions().solver_iter_max;
+  }
+  if (ba_global_backend == BundleAdjustmentBackend::ARAEL) {
+    return AraelBundleAdjustmentOptions().max_num_iterations;
   }
   return kDefaultCeresGlobalMaxNumIterations;
 }

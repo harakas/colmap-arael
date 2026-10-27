@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [".", "capi"]
+
+[workspace.dependencies]
+# threads: BundleAdjustmentArael.num_threads runs solves on several
+# threads
+arael = { version = "0.9.3", features = ["threads"] }
+
+[profile.release]
+codegen-units = 1
+
+[package]
+name = "colmap-arael"
+version = "0.1.0"
+edition = "2024"
+
+# cargo arael export: the C++ interface only (cxx/ and the capi/ crate
+# it builds on).
+[package.metadata.arael]
+interfaces = ["cxx"]
+
+[dependencies]
+arael = { workspace = true }
+
+# Added by cargo-arael. Model code generation runs inside the arael
+# proc-macros at compile time, and cargo builds proc-macros unoptimized
+# in every profile -- so a large model spends most of its build
+# expanding. These build just the macro crates optimized, without
+# optimizing your own debug build.
+[profile.dev.package.arael-macros]
+opt-level = 3
+[profile.dev.package.arael-sym]
+opt-level = 3
+[profile.release.package.arael-macros]
+opt-level = 3
+[profile.release.package.arael-sym]
+opt-level = 3

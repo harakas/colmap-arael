@@ -3,6 +3,7 @@
 #include "colmap/sfm/incremental_mapper.h"
 
 #include "colmap/controllers/incremental_pipeline.h"
+#include "colmap/estimators/bundle_adjustment_arael.h"
 
 #include "pycolmap/helpers.h"
 #include "pycolmap/pybind11_extension.h"
@@ -179,6 +180,12 @@ void BindIncrementalPipeline(py::module& m) {
                      &Opts::ba_report_path,
                      "Path of a file every bundle adjustment appends one "
                      "line of JSON to; empty for none.")
+      .def_readwrite("ba_arael",
+                     &Opts::ba_arael,
+                     "The arael solver options every bundle adjustment "
+                     "starts from; the iteration limits and the thread "
+                     "count of the mapper override its own. None for the "
+                     "defaults.")
       .def_readwrite("use_prior_position",
                      &Opts::use_prior_position,
                      "Whether to use priors on the camera positions.")

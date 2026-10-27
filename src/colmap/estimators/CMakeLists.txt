@@ -26,6 +26,13 @@ set(ESTIMATORS_SRCS
     view_graph_calibration.h view_graph_calibration.cc
 )
 
+if(ARAEL_ENABLED)
+    list(APPEND ESTIMATORS_SRCS
+        bundle_adjustment_arael.h
+        bundle_adjustment_arael.cc
+    )
+endif()
+
 COLMAP_ADD_LIBRARY(
     NAME colmap_estimators
     SRCS ${ESTIMATORS_SRCS}
@@ -47,6 +54,29 @@ COLMAP_ADD_LIBRARY(
 
 if(CASPAR_ENABLED)
     target_link_libraries(colmap_estimators PUBLIC caspar_lib_core)
+endif()
+
+if(ARAEL_ENABLED)
+    # The arael model crate: cargo builds its C library, the generated
+    # C++ headers wrap it. Needs a Rust toolchain.
+    add_subdirectory(arael/cxx)
+    # The cargo-built library is an imported target, which cannot be
+    # exported. Wrap it in an interface library that links the imported
+    # target in the build tree and the installed archive after install.
+    get_target_property(_arael_capi_lib arael_colmap_arael IMPORTED_LOCATION)
+    get_filename_component(_arael_capi_lib_name ${_arael_capi_lib} NAME)
+    add_library(colmap_arael INTERFACE)
+    target_link_libraries(colmap_arael INTERFACE
+        $<BUILD_INTERFACE:arael::colmap_arael>
+        $<INSTALL_INTERFACE:$<INSTALL_PREFIX>/${CMAKE_INSTALL_LIBDIR}/${_arael_capi_lib_name}>)
+    if(UNIX)
+        target_link_libraries(colmap_arael INTERFACE
+            $<INSTALL_INTERFACE:pthread>
+            $<INSTALL_INTERFACE:dl>
+            $<INSTALL_INTERFACE:m>)
+    endif()
+    install(FILES ${_arael_capi_lib} DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    target_link_libraries(colmap_estimators PUBLIC colmap_arael)
 endif()
 
 if(CUDA_ENABLED)
@@ -72,6 +102,13 @@ if(CASPAR_ENABLED)
     COLMAP_ADD_TEST(
         NAME bundle_adjustment_caspar_test
         SRCS bundle_adjustment_caspar_test.cc
+        LINK_LIBS colmap_estimators
+    )
+endif()
+if(ARAEL_ENABLED)
+    COLMAP_ADD_TEST(
+        NAME bundle_adjustment_arael_test
+        SRCS bundle_adjustment_arael_test.cc
         LINK_LIBS colmap_estimators
     )
 endif()

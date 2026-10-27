@@ -4,6 +4,7 @@
 
 #include "colmap/controllers/image_reader.h"
 #include "colmap/controllers/incremental_pipeline.h"
+#include "colmap/estimators/bundle_adjustment_arael.h"
 #include "colmap/feature/sift.h"
 #include "colmap/mvs/patch_match_options.h"
 #include "colmap/util/file.h"
@@ -47,6 +48,43 @@ TEST(OptionManager, MapperPresets) {
   EXPECT_EQ(options.mapper->ba_global_max_num_iterations,
             mapper.ba_global_max_num_iterations);
 }
+
+#ifdef ARAEL_ENABLED
+TEST(OptionManager, MapperSharesTheAraelBlock) {
+  OptionManager options;
+  options.AddMapperOptions();
+
+  std::vector<std::string> args = {
+      "colmap",
+      "--BundleAdjustmentArael.schur_solve",
+      "ITERATIVE",
+      "--BundleAdjustmentArael.ordering",
+      "AMD",
+  };
+  std::vector<char*> argv;
+  argv.reserve(args.size());
+  for (auto& arg : args) {
+    argv.push_back(const_cast<char*>(arg.c_str()));
+  }
+  EXPECT_TRUE(options.Parse(argv.size(), argv.data()));
+
+  ASSERT_NE(options.mapper->ba_arael, nullptr);
+  EXPECT_EQ(options.mapper->ba_arael.get(),
+            options.bundle_adjustment->arael.get());
+  EXPECT_EQ(options.mapper->ba_arael->schur_solve, AraelSchurSolve::ITERATIVE);
+  EXPECT_EQ(options.mapper->ba_arael->ordering, AraelOrdering::AMD);
+  const BundleAdjustmentOptions global =
+      options.mapper->GlobalBundleAdjustment();
+  ASSERT_NE(global.arael, nullptr);
+  EXPECT_EQ(global.arael->schur_solve, AraelSchurSolve::ITERATIVE);
+  EXPECT_EQ(global.arael->ordering, AraelOrdering::AMD);
+
+  // A reset keeps the two linked.
+  options.ResetOptions(/*reset_paths=*/false);
+  EXPECT_EQ(options.mapper->ba_arael.get(),
+            options.bundle_adjustment->arael.get());
+}
+#endif  // ARAEL_ENABLED
 
 TEST(OptionManager, ConstructionKeepsLoggingOnRequest) {
   FLAGS_v = 3;

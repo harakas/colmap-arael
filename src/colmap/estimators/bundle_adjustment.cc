@@ -2,6 +2,7 @@
 
 #include "colmap/estimators/bundle_adjustment.h"
 
+#include "colmap/estimators/bundle_adjustment_arael.h"
 #include "colmap/estimators/bundle_adjustment_caspar.h"
 #include "colmap/estimators/bundle_adjustment_ceres.h"
 
@@ -300,7 +301,8 @@ const BundleAdjustmentConfig& BundleAdjuster::Config() const { return config_; }
 
 BundleAdjustmentBackendOptions::BundleAdjustmentBackendOptions()
     : ceres(std::make_shared<CeresBundleAdjustmentOptions>()),
-      caspar(std::make_shared<CasparBundleAdjustmentOptions>()) {}
+      caspar(std::make_shared<CasparBundleAdjustmentOptions>()),
+      arael(std::make_shared<AraelBundleAdjustmentOptions>()) {}
 
 BundleAdjustmentBackendOptions::BundleAdjustmentBackendOptions(
     const BundleAdjustmentBackendOptions& other) {
@@ -309,6 +311,9 @@ BundleAdjustmentBackendOptions::BundleAdjustmentBackendOptions(
   }
   if (other.caspar) {
     caspar = std::make_shared<CasparBundleAdjustmentOptions>(*other.caspar);
+  }
+  if (other.arael) {
+    arael = std::make_shared<AraelBundleAdjustmentOptions>(*other.arael);
   }
 }
 
@@ -327,6 +332,11 @@ BundleAdjustmentBackendOptions& BundleAdjustmentBackendOptions::operator=(
   } else {
     caspar.reset();
   }
+  if (other.arael) {
+    arael = std::make_shared<AraelBundleAdjustmentOptions>(*other.arael);
+  } else {
+    arael.reset();
+  }
   return *this;
 }
 
@@ -343,6 +353,15 @@ std::unique_ptr<BundleAdjuster> CreateDefaultBundleAdjuster(
       return CreateDefaultCeresBundleAdjuster(options, config, reconstruction);
     case BundleAdjustmentBackend::CASPAR:
       return CreateDefaultCasparBundleAdjuster(options, config, reconstruction);
+    case BundleAdjustmentBackend::ARAEL:
+#ifdef ARAEL_ENABLED
+      return CreateDefaultAraelBundleAdjuster(options, config, reconstruction);
+#else
+      LOG(FATAL_THROW)
+          << "arael BA backend selected but COLMAP was built without "
+             "ARAEL_ENABLED; rebuild with -DARAEL_ENABLED=ON to use it";
+      return nullptr;
+#endif
   }
   LOG(FATAL_THROW) << "Unknown bundle adjustment backend: "
                    << static_cast<int>(options.backend);
@@ -406,6 +425,15 @@ std::unique_ptr<BundleAdjuster> CreatePosePriorBundleAdjuster(
       LOG(FATAL_THROW)
           << "Caspar BA backend selected but COLMAP was built without "
              "CASPAR_ENABLED; rebuild with -DCASPAR_ENABLED=ON to use it";
+#endif
+      return nullptr;
+    case BundleAdjustmentBackend::ARAEL:
+#ifdef ARAEL_ENABLED
+      LOG(FATAL_THROW) << "arael BA backend does not support pose priors";
+#else
+      LOG(FATAL_THROW)
+          << "arael BA backend selected but COLMAP was built without "
+             "ARAEL_ENABLED; rebuild with -DARAEL_ENABLED=ON to use it";
 #endif
       return nullptr;
   }

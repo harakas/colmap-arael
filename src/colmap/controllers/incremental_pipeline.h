@@ -126,6 +126,11 @@ struct IncrementalPipelineOptions {
   // (BundleAdjustmentOptions::report_path). Empty for none.
   std::string ba_report_path;
 
+  // The arael solver options every bundle adjustment starts from; the
+  // iteration limit and the thread count above override its own. Null
+  // for the defaults.
+  std::shared_ptr<AraelBundleAdjustmentOptions> ba_arael;
+
   // Whether to use priors on the camera positions.
   bool use_prior_position = false;
 

@@ -10,6 +10,9 @@
 #include "colmap/controllers/incremental_pipeline.h"
 #include "colmap/controllers/pairing.h"
 #include "colmap/sensor/models.h"
+#ifdef ARAEL_ENABLED
+#include "colmap/estimators/bundle_adjustment_arael.h"
+#endif
 #ifdef CASPAR_ENABLED
 #include "colmap/estimators/bundle_adjustment_caspar.h"
 #endif
@@ -81,6 +84,7 @@ OptionManager::OptionManager(bool add_project_options, bool reset_logging)
   imported_pairing = std::make_shared<ImportedPairingOptions>();
   bundle_adjustment = std::make_shared<BundleAdjustmentOptions>();
   mapper = std::make_shared<IncrementalPipelineOptions>();
+  mapper->ba_arael = bundle_adjustment->arael;
   global_mapper = std::make_shared<GlobalPipelineOptions>();
   hierarchical_mapper = std::make_shared<HierarchicalPipelineOptions>();
   gravity_refiner = std::make_shared<GravityRefinerOptions>();
@@ -723,12 +727,67 @@ void OptionManager::AddBundleAdjustmentOptions() {
   AddDefaultOption("BundleAdjustmentCaspar.gpu_index",
                    &bundle_adjustment->caspar->gpu_index);
 #endif  // CASPAR_ENABLED
+
+#ifdef ARAEL_ENABLED
+  // arael-specific options
+  AddDefaultEnumOption("BundleAdjustmentArael.preset",
+                       &bundle_adjustment->arael->preset,
+                       AraelBundleAdjustmentPresetToString,
+                       AraelBundleAdjustmentPresetFromString,
+                       EnumHelpText(AraelBundleAdjustmentPresetStrings()));
+  AddDefaultEnumOption("BundleAdjustmentArael.driver",
+                       &bundle_adjustment->arael->driver,
+                       AraelDriverToString,
+                       AraelDriverFromString,
+                       EnumHelpText(AraelDriverStrings()));
+  AddDefaultOption("BundleAdjustmentArael.initial_lambda",
+                   &bundle_adjustment->arael->initial_lambda);
+  AddDefaultOption("BundleAdjustmentArael.max_num_iterations",
+                   &bundle_adjustment->arael->max_num_iterations);
+  AddDefaultOption("BundleAdjustmentArael.rel_precision",
+                   &bundle_adjustment->arael->rel_precision);
+  AddDefaultOption("BundleAdjustmentArael.min_diagonal",
+                   &bundle_adjustment->arael->min_diagonal);
+  AddDefaultOption("BundleAdjustmentArael.num_threads",
+                   &bundle_adjustment->arael->num_threads);
+  AddDefaultEnumOption("BundleAdjustmentArael.schur_policy",
+                       &bundle_adjustment->arael->schur_policy,
+                       AraelSchurPolicyToString,
+                       AraelSchurPolicyFromString,
+                       EnumHelpText(AraelSchurPolicyStrings()));
+  AddDefaultEnumOption("BundleAdjustmentArael.schur_solve",
+                       &bundle_adjustment->arael->schur_solve,
+                       AraelSchurSolveToString,
+                       AraelSchurSolveFromString,
+                       EnumHelpText(AraelSchurSolveStrings()));
+  AddDefaultOption("BundleAdjustmentArael.max_cg_iterations",
+                   &bundle_adjustment->arael->max_cg_iterations);
+  AddDefaultEnumOption("BundleAdjustmentArael.ordering",
+                       &bundle_adjustment->arael->ordering,
+                       AraelOrderingToString,
+                       AraelOrderingFromString,
+                       EnumHelpText(AraelOrderingStrings()));
+  AddDefaultEnumOption("BundleAdjustmentArael.block_supernodal",
+                       &bundle_adjustment->arael->block_supernodal,
+                       AraelRouteModeToString,
+                       AraelRouteModeFromString,
+                       EnumHelpText(AraelRouteModeStrings()));
+  AddDefaultEnumOption("BundleAdjustmentArael.envelope",
+                       &bundle_adjustment->arael->envelope,
+                       AraelRouteModeToString,
+                       AraelRouteModeFromString,
+                       EnumHelpText(AraelRouteModeStrings()));
+#endif  // ARAEL_ENABLED
 }
 
 void OptionManager::AddMapperOptions() {
   if (!RegisterOptionGroupOnce("mapper")) {
     return;
   }
+
+  // The mapper's solves start from the bundle adjustment group's arael
+  // options.
+  AddBundleAdjustmentOptions();
 
   AddDefaultOption("Mapper.min_num_matches", &mapper->min_num_matches);
   AddDefaultOption("Mapper.ignore_watermarks", &mapper->ignore_watermarks);
@@ -1305,6 +1364,7 @@ void OptionManager::ResetOptions(const bool reset_paths) {
   *imported_pairing = ImportedPairingOptions();
   *bundle_adjustment = BundleAdjustmentOptions();
   *mapper = IncrementalPipelineOptions();
+  mapper->ba_arael = bundle_adjustment->arael;
   *global_mapper = GlobalPipelineOptions();
   *hierarchical_mapper = HierarchicalPipelineOptions();
   *gravity_refiner = GravityRefinerOptions();

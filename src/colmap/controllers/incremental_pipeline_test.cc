@@ -2,6 +2,7 @@
 
 #include "colmap/controllers/incremental_pipeline.h"
 
+#include "colmap/estimators/bundle_adjustment_arael.h"
 #include "colmap/estimators/bundle_adjustment_caspar.h"
 #include "colmap/estimators/bundle_adjustment_ceres.h"
 #include "colmap/geometry/rigid3_matchers.h"
@@ -710,6 +711,8 @@ TEST(IncrementalPipelineOptions, PropagatesExplicitMaxNumIterations) {
   EXPECT_EQ(local_options.ceres->solver_options.max_num_iterations, 25);
   ASSERT_TRUE(local_options.caspar);
   EXPECT_EQ(local_options.caspar->solver_iter_max, 25);
+  ASSERT_TRUE(local_options.arael);
+  EXPECT_EQ(local_options.arael->max_num_iterations, 25);
 
   const BundleAdjustmentOptions global_options =
       options.GlobalBundleAdjustment();
@@ -717,6 +720,8 @@ TEST(IncrementalPipelineOptions, PropagatesExplicitMaxNumIterations) {
   EXPECT_EQ(global_options.ceres->solver_options.max_num_iterations, 50);
   ASSERT_TRUE(global_options.caspar);
   EXPECT_EQ(global_options.caspar->solver_iter_max, 50);
+  ASSERT_TRUE(global_options.arael);
+  EXPECT_EQ(global_options.arael->max_num_iterations, 50);
 }
 
 TEST(IncrementalPipelineOptions, DefaultMaxNumIterationsUsesBackendDefaults) {
@@ -727,12 +732,15 @@ TEST(IncrementalPipelineOptions, DefaultMaxNumIterationsUsesBackendDefaults) {
   ASSERT_EQ(options.ba_local_max_num_iterations, -1);
   ASSERT_EQ(options.ba_global_max_num_iterations, -1);
   const int caspar_default = CasparBundleAdjustmentOptions().solver_iter_max;
+  const int arael_default = AraelBundleAdjustmentOptions().max_num_iterations;
 
   const BundleAdjustmentOptions local_options = options.LocalBundleAdjustment();
   ASSERT_TRUE(local_options.ceres);
   EXPECT_EQ(local_options.ceres->solver_options.max_num_iterations, 25);
   ASSERT_TRUE(local_options.caspar);
   EXPECT_EQ(local_options.caspar->solver_iter_max, caspar_default);
+  ASSERT_TRUE(local_options.arael);
+  EXPECT_EQ(local_options.arael->max_num_iterations, arael_default);
 
   const BundleAdjustmentOptions global_options =
       options.GlobalBundleAdjustment();
@@ -740,11 +748,14 @@ TEST(IncrementalPipelineOptions, DefaultMaxNumIterationsUsesBackendDefaults) {
   EXPECT_EQ(global_options.ceres->solver_options.max_num_iterations, 50);
   ASSERT_TRUE(global_options.caspar);
   EXPECT_EQ(global_options.caspar->solver_iter_max, caspar_default);
+  ASSERT_TRUE(global_options.arael);
+  EXPECT_EQ(global_options.arael->max_num_iterations, arael_default);
 }
 
 TEST(IncrementalPipelineOptions, EffBaMaxNumIterations) {
   IncrementalPipelineOptions options;
   const int caspar_default = CasparBundleAdjustmentOptions().solver_iter_max;
+  const int arael_default = AraelBundleAdjustmentOptions().max_num_iterations;
 
   // Sentinel resolves to the configured backend's default.
   EXPECT_EQ(options.EffBaLocalMaxNumIterations(), 25);
@@ -753,12 +764,51 @@ TEST(IncrementalPipelineOptions, EffBaMaxNumIterations) {
   options.ba_global_backend = BundleAdjustmentBackend::CASPAR;
   EXPECT_EQ(options.EffBaLocalMaxNumIterations(), caspar_default);
   EXPECT_EQ(options.EffBaGlobalMaxNumIterations(), caspar_default);
+  options.ba_local_backend = BundleAdjustmentBackend::ARAEL;
+  options.ba_global_backend = BundleAdjustmentBackend::ARAEL;
+  EXPECT_EQ(options.EffBaLocalMaxNumIterations(), arael_default);
+  EXPECT_EQ(options.EffBaGlobalMaxNumIterations(), arael_default);
 
   // Explicit values win regardless of backend.
   options.ba_local_max_num_iterations = 7;
   options.ba_global_max_num_iterations = 13;
   EXPECT_EQ(options.EffBaLocalMaxNumIterations(), 7);
   EXPECT_EQ(options.EffBaGlobalMaxNumIterations(), 13);
+}
+
+TEST(IncrementalPipelineOptions, AraelBlockReachesEverySolve) {
+  IncrementalPipelineOptions options;
+  options.num_threads = 3;
+  options.ba_global_max_num_iterations = 12;
+  options.ba_arael = std::make_shared<AraelBundleAdjustmentOptions>();
+  options.ba_arael->schur_solve = AraelSchurSolve::ITERATIVE;
+  options.ba_arael->max_num_iterations = 99;
+  options.ba_arael->num_threads = 1;
+  for (const BundleAdjustmentOptions& ba_options :
+       {options.LocalBundleAdjustment(), options.GlobalBundleAdjustment()}) {
+    ASSERT_NE(ba_options.arael, nullptr);
+    EXPECT_EQ(ba_options.arael->schur_solve, AraelSchurSolve::ITERATIVE);
+    // The mapper's own limits win over the block's.
+    EXPECT_EQ(ba_options.arael->num_threads, 3);
+  }
+  EXPECT_EQ(options.GlobalBundleAdjustment().arael->max_num_iterations, 12);
+  // The block is copied, not shared, into a solve's options.
+  EXPECT_NE(options.GlobalBundleAdjustment().arael.get(),
+            options.ba_arael.get());
+}
+
+TEST(IncrementalPipelineOptions, ThreadCountReachesEveryBackend) {
+  IncrementalPipelineOptions options;
+  options.num_threads = 3;
+  for (const BundleAdjustmentOptions& ba_options :
+       {options.LocalBundleAdjustment(), options.GlobalBundleAdjustment()}) {
+    if (ba_options.ceres) {
+      EXPECT_EQ(ba_options.ceres->solver_options.num_threads, 3);
+    }
+    if (ba_options.arael) {
+      EXPECT_EQ(ba_options.arael->num_threads, 3);
+    }
+  }
 }
 
 }  // namespace

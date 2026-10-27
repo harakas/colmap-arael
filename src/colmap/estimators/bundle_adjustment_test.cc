@@ -65,6 +65,9 @@ std::vector<BundleAdjustmentBackend> BundleAdjustmentBackends() {
 #ifdef CASPAR_ENABLED
   backends.push_back(BundleAdjustmentBackend::CASPAR);
 #endif
+#ifdef ARAEL_ENABLED
+  backends.push_back(BundleAdjustmentBackend::ARAEL);
+#endif
   return backends;
 }
 

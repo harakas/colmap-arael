@@ -31,7 +31,8 @@ MAKE_ENUM_CLASS_OVERLOAD_STREAM(BundleAdjustmentTerminationType,
                                 USER_FAILURE);
 
 // Backend for bundle adjustment solver.
-MAKE_ENUM_CLASS_OVERLOAD_STREAM(BundleAdjustmentBackend, 0, CERES, CASPAR);
+MAKE_ENUM_CLASS_OVERLOAD_STREAM(
+    BundleAdjustmentBackend, 0, CERES, CASPAR, ARAEL);
 
 // Summary of bundle adjustment results, independent of solver backend.
 struct BundleAdjustmentSummary {
@@ -124,6 +125,7 @@ class BundleAdjustmentConfig {
 };
 
 struct CasparBundleAdjustmentOptions;
+struct AraelBundleAdjustmentOptions;
 
 struct BundleAdjustmentBackendOptions {
   // Ceres-specific options (only used when backend == CERES).
@@ -132,6 +134,10 @@ struct BundleAdjustmentBackendOptions {
   // Caspar-specific options (only used when backend == CASPAR).
   // Type defined in bundle_adjustment_caspar.h.
   std::shared_ptr<CasparBundleAdjustmentOptions> caspar;
+
+  // arael-specific options (only used when backend == ARAEL).
+  // Type defined in bundle_adjustment_arael.h.
+  std::shared_ptr<AraelBundleAdjustmentOptions> arael;
 
   BundleAdjustmentBackendOptions();
   BundleAdjustmentBackendOptions(const BundleAdjustmentBackendOptions& other);

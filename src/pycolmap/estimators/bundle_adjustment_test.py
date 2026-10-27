@@ -33,10 +33,15 @@ def test_bundle_adjustment_backend_enum() -> None:
     } == {
         "CERES": 0,
         "CASPAR": 1,
+        "ARAEL": 2,
     }
     assert (
         pycolmap.BundleAdjustmentBackend("CASPAR")
         == pycolmap.BundleAdjustmentBackend.CASPAR
+    )
+    assert (
+        pycolmap.BundleAdjustmentBackend("ARAEL")
+        == pycolmap.BundleAdjustmentBackend.ARAEL
     )
 
 
@@ -199,6 +204,8 @@ def test_ba_options_backend_readwrite() -> None:
     assert options.backend == pycolmap.BundleAdjustmentBackend.CERES
     options.backend = pycolmap.BundleAdjustmentBackend.CASPAR
     assert options.backend == pycolmap.BundleAdjustmentBackend.CASPAR
+    options.backend = pycolmap.BundleAdjustmentBackend.ARAEL
+    assert options.backend == pycolmap.BundleAdjustmentBackend.ARAEL
 
 
 def test_ba_options_ceres_property() -> None:
@@ -211,6 +218,60 @@ def test_ba_options_caspar_property() -> None:
     options = pycolmap.BundleAdjustmentOptions()
     caspar = options.caspar
     assert isinstance(caspar, pycolmap.CasparBundleAdjustmentOptions)
+
+
+def test_ba_options_arael_property() -> None:
+    options = pycolmap.BundleAdjustmentOptions()
+    arael = options.arael
+    assert isinstance(arael, pycolmap.AraelBundleAdjustmentOptions)
+
+
+def test_arael_ba_options_default_init() -> None:
+    options = pycolmap.AraelBundleAdjustmentOptions()
+    assert (
+        options.preset == pycolmap.AraelBundleAdjustmentPreset.WELL_CONDITIONED
+    )
+    assert options.driver == pycolmap.AraelDriver.NIELSEN
+    assert options.max_num_iterations == 100
+    assert options.rel_precision == 1e-6
+    assert options.num_threads == -1
+    assert options.schur_policy == pycolmap.AraelSchurPolicy.FORCE
+    assert options.schur_solve == pycolmap.AraelSchurSolve.FACTORIZE
+    assert options.max_cg_iterations == 200
+    assert options.ordering == pycolmap.AraelOrdering.AUTO
+    assert options.block_supernodal == pycolmap.AraelRouteMode.AUTO
+    assert options.envelope == pycolmap.AraelRouteMode.AUTO
+    assert options.check()
+
+
+def test_arael_ba_options_readwrite() -> None:
+    options = pycolmap.AraelBundleAdjustmentOptions()
+    options.driver = pycolmap.AraelDriver("PRESET")
+    assert options.driver == pycolmap.AraelDriver.PRESET
+    options.preset = pycolmap.AraelBundleAdjustmentPreset("ILL_CONDITIONED")
+    assert (
+        options.preset == pycolmap.AraelBundleAdjustmentPreset.ILL_CONDITIONED
+    )
+    options.initial_lambda = 1e-3
+    assert options.initial_lambda == 1e-3
+    options.max_num_iterations = 25
+    assert options.max_num_iterations == 25
+    options.rel_precision = 1e-6
+    assert options.rel_precision == 1e-6
+    options.num_threads = 2
+    assert options.num_threads == 2
+    options.schur_policy = pycolmap.AraelSchurPolicy("FORCE")
+    assert options.schur_policy == pycolmap.AraelSchurPolicy.FORCE
+    options.schur_solve = pycolmap.AraelSchurSolve.ITERATIVE
+    assert options.schur_solve == pycolmap.AraelSchurSolve.ITERATIVE
+    options.max_cg_iterations = 50
+    assert options.max_cg_iterations == 50
+    options.ordering = pycolmap.AraelOrdering.NESTED_DISSECTION
+    assert options.ordering == pycolmap.AraelOrdering.NESTED_DISSECTION
+    options.block_supernodal = pycolmap.AraelRouteMode.NEVER
+    assert options.block_supernodal == pycolmap.AraelRouteMode.NEVER
+    options.envelope = pycolmap.AraelRouteMode("ALWAYS")
+    assert options.envelope == pycolmap.AraelRouteMode.ALWAYS
 
 
 def test_ba_options_check() -> None:

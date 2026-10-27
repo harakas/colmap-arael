@@ -3,6 +3,9 @@
 #include "colmap/estimators/bundle_adjustment.h"
 
 #include "colmap/estimators/bundle_adjustment_ceres.h"
+#ifdef ARAEL_ENABLED
+#include "colmap/estimators/bundle_adjustment_arael.h"
+#endif
 #include "colmap/scene/reconstruction.h"
 #include "colmap/scene/synthetic.h"
 
@@ -159,12 +162,66 @@ BENCHMARK_DEFINE_F(BM_BundleAdjustment, Caspar)(benchmark::State& state) {
 }
 #endif
 
+#ifdef ARAEL_ENABLED
+// Time column reports wall-clock time (ms) per full BA solve, on every
+// core and on one thread.
+void RunArael(benchmark::State& state,
+              BundleAdjustmentOptions opts,
+              Reconstruction& reconstruction,
+              const BundleAdjustmentConfig& config) {
+  opts.backend = BundleAdjustmentBackend::ARAEL;
+  for (auto _ : state) {
+    state.PauseTiming();
+    Reconstruction copy = reconstruction;
+    state.ResumeTiming();
+
+    auto ba = CreateDefaultBundleAdjuster(opts, config, copy);
+    const auto summary = ba->Solve();
+
+    state.PauseTiming();
+    if (summary->termination_type ==
+        BundleAdjustmentTerminationType::NO_CONVERGENCE) {
+      state.SkipWithError("Bundle adjustment did not converge");
+      break;
+    }
+    state.ResumeTiming();
+  }
+}
+
+BENCHMARK_DEFINE_F(BM_BundleAdjustment, Arael)(benchmark::State& state) {
+  RunArael(state, options_, *reconstruction_, config_);
+  state.PauseTiming();
+  ReportSceneCounters(state);
+  state.ResumeTiming();
+}
+
+BENCHMARK_DEFINE_F(BM_BundleAdjustment, AraelSingleThread)
+(benchmark::State& state) {
+  BundleAdjustmentOptions opts = options_;
+  opts.arael->num_threads = 1;
+  RunArael(state, opts, *reconstruction_, config_);
+  state.PauseTiming();
+  ReportSceneCounters(state);
+  state.ResumeTiming();
+}
+#endif
+
 BENCHMARK_REGISTER_F(BM_BundleAdjustment, Ceres)
     ->Apply(AddArguments)
     ->Unit(benchmark::kMillisecond);
 
 #ifdef CASPAR_ENABLED
 BENCHMARK_REGISTER_F(BM_BundleAdjustment, Caspar)
+    ->Apply(AddArguments)
+    ->Unit(benchmark::kMillisecond);
+#endif
+
+#ifdef ARAEL_ENABLED
+BENCHMARK_REGISTER_F(BM_BundleAdjustment, Arael)
+    ->Apply(AddArguments)
+    ->Unit(benchmark::kMillisecond);
+
+BENCHMARK_REGISTER_F(BM_BundleAdjustment, AraelSingleThread)
     ->Apply(AddArguments)
     ->Unit(benchmark::kMillisecond);
 #endif

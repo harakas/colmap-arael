@@ -59,6 +59,11 @@ if(CASPAR_ENABLED)
     endif()
 endif()
 
+option(ARAEL_ENABLED "Whether to enable the arael bundle adjustment backend" OFF)
+if(ARAEL_ENABLED)
+    add_compile_definitions(ARAEL_ENABLED)
+endif()
+
 # Disables default features, as we specify each required feature manually below.
 list(APPEND VCPKG_MANIFEST_FEATURES "core")
 
@@ -467,6 +472,9 @@ if(FETCH_FAISS)
 endif()
 if(CASPAR_ENABLED)
     list(APPEND COLMAP_EXPORT_LIBS caspar_lib_core)
+endif()
+if(ARAEL_ENABLED)
+    list(APPEND COLMAP_EXPORT_LIBS colmap_arael)
 endif()
 
 # Add unified interface library target to export.
