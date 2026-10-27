@@ -10,6 +10,8 @@
 
 namespace colmap {
 
+enum class BundleAdjustmentBackend;
+
 class OptionsWidget : public QWidget {
  public:
   explicit OptionsWidget(QWidget* parent);
@@ -49,6 +51,9 @@ class OptionsWidget : public QWidget {
                                const std::string& label_text);
   QLineEdit* AddOptionDirPath(std::filesystem::path* option,
                               const std::string& label_text);
+  // A combo box of the bundle adjustment backends built into this binary.
+  QComboBox* AddOptionBundleAdjustmentBackend(BundleAdjustmentBackend* option,
+                                              const std::string& label_text);
 
   void AddSpacer();
   void AddSection(const std::string& title);
@@ -83,6 +88,8 @@ class OptionsWidget : public QWidget {
   std::vector<std::pair<QCheckBox*, bool*>> options_bool_;
   std::vector<std::pair<QLineEdit*, std::string*>> options_text_;
   std::vector<std::pair<QLineEdit*, std::filesystem::path*>> options_path_;
+  std::vector<std::pair<QComboBox*, BundleAdjustmentBackend*>>
+      options_ba_backend_;
 
  private:
   QLabel* CreateRowLabel(const std::string& label_text);

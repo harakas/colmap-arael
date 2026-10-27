@@ -2,6 +2,8 @@
 
 #include "colmap/ui/options_widget.h"
 
+#include "colmap/estimators/bundle_adjustment.h"
+
 #include <limits>
 
 namespace colmap {
@@ -210,6 +212,31 @@ QLineEdit* OptionsWidget::AddOptionDirPath(std::filesystem::path* option,
   return AddOptionPath(option, label_text, /*directory=*/true);
 }
 
+QComboBox* OptionsWidget::AddOptionBundleAdjustmentBackend(
+    BundleAdjustmentBackend* option, const std::string& label_text) {
+  QComboBox* combo_box = new QComboBox(this);
+  for (const BundleAdjustmentBackend backend : {
+           BundleAdjustmentBackend::CERES,
+#ifdef CASPAR_ENABLED
+           BundleAdjustmentBackend::CASPAR,
+#endif
+#ifdef ARAEL_ENABLED
+           BundleAdjustmentBackend::ARAEL,
+#endif
+       }) {
+    combo_box->addItem(QString::fromStdString(std::string(
+                           BundleAdjustmentBackendToString(backend))),
+                       static_cast<int>(backend));
+  }
+  combo_box->setCurrentIndex(combo_box->findData(static_cast<int>(*option)));
+
+  AddOptionRow(label_text, combo_box, option);
+
+  options_ba_backend_.emplace_back(combo_box, option);
+
+  return combo_box;
+}
+
 void OptionsWidget::AddSpacer() {
   QLabel* label = new QLabel("", this);
   label->setFont(font());
@@ -253,6 +280,11 @@ void OptionsWidget::ReadOptions() {
   for (auto& option : options_path_) {
     option.first->setText(QString::fromStdString(option.second->string()));
   }
+
+  for (auto& option : options_ba_backend_) {
+    option.first->setCurrentIndex(
+        option.first->findData(static_cast<int>(*option.second)));
+  }
 }
 
 void OptionsWidget::WriteOptions() {
@@ -282,6 +314,15 @@ void OptionsWidget::WriteOptions() {
 
   for (auto& option : options_path_) {
     *option.second = option.first->text().toUtf8().constData();
+  }
+
+  // No selection: the option names a backend this binary does not build,
+  // and stays as it is.
+  for (auto& option : options_ba_backend_) {
+    if (option.first->currentIndex() >= 0) {
+      *option.second = static_cast<BundleAdjustmentBackend>(
+          option.first->currentData().toInt());
+    }
   }
 }
 

@@ -58,22 +58,13 @@ BundleAdjustmentWidget::BundleAdjustmentWidget(MainWindow* main_window,
   AddOptionBool(&options->bundle_adjustment->refine_points3D,
                 "refine_points3D");
 
-#ifdef CASPAR_ENABLED
+#if defined(CASPAR_ENABLED) || defined(ARAEL_ENABLED)
   AddSection("Bundle Adjustment Backend");
-  auto* backend_combo = new QComboBox(this);
-  backend_combo->addItem("CERES");  // index 0 == BundleAdjustmentBackend::CERES
-  backend_combo->addItem(
-      "CASPAR");  // index 1 == BundleAdjustmentBackend::CASPAR
-  backend_combo->setCurrentIndex(
-      static_cast<int>(options->bundle_adjustment->backend));
-  connect(backend_combo,
-          QOverload<int>::of(&QComboBox::currentIndexChanged),
-          [options](int idx) {
-            options->bundle_adjustment->backend =
-                static_cast<BundleAdjustmentBackend>(idx);
-          });
-  AddWidgetRow("backend", backend_combo);
+  [[maybe_unused]] QComboBox* backend_combo = AddOptionBundleAdjustmentBackend(
+      &options->bundle_adjustment->backend, "backend");
+#endif
 
+#ifdef CASPAR_ENABLED
   AddSection("Caspar Options");
   AddOptionText(&options->bundle_adjustment->caspar->gpu_index,
                 "gpu_index (-1 = auto)");
@@ -86,8 +77,9 @@ BundleAdjustmentWidget::BundleAdjustmentWidget(MainWindow* main_window,
 
   connect(backend_combo,
           QOverload<int>::of(&QComboBox::currentIndexChanged),
-          [this, options](int idx) {
-            const bool is_caspar = static_cast<BundleAdjustmentBackend>(idx) ==
+          [this, options, backend_combo](int idx) {
+            const bool is_caspar = static_cast<BundleAdjustmentBackend>(
+                                       backend_combo->itemData(idx).toInt()) ==
                                    BundleAdjustmentBackend::CASPAR;
             if (is_caspar) {
               ShowOption(&options->bundle_adjustment->caspar->gpu_index);

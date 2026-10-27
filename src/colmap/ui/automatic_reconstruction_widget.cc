@@ -61,16 +61,11 @@ AutomaticReconstructionWidget::AutomaticReconstructionWidget(
   AddOptionBool(&options_.use_gpu, "GPU");
   AddOptionText(&options_.gpu_index, "gpu_index");
 
-#ifdef CASPAR_ENABLED
+#if defined(CASPAR_ENABLED) || defined(ARAEL_ENABLED)
   AddSpacer();
   AddSection("Bundle Adjustment Backend");
 
-  ba_backend_cb_ = new QComboBox(this);
-  ba_backend_cb_->addItem("CERES");
-  ba_backend_cb_->addItem("CASPAR");
-  ba_backend_cb_->addItem("ARAEL");
-  ba_backend_cb_->setCurrentIndex(static_cast<int>(options_.ba_backend));
-  AddWidgetRow("Backend", ba_backend_cb_);
+  AddOptionBundleAdjustmentBackend(&options_.ba_backend, "Backend");
 #endif
 
   AddSpacer();
@@ -150,11 +145,6 @@ void AutomaticReconstructionWidget::Run() {
       options_.mesher = AutomaticReconstructionController::Mesher::POISSON;
       break;
   }
-
-#ifdef CASPAR_ENABLED
-  options_.ba_backend =
-      static_cast<BundleAdjustmentBackend>(ba_backend_cb_->currentIndex());
-#endif
 
   main_window_->reconstruction_manager_->Clear();
   main_window_->reconstruction_manager_widget_->Update();

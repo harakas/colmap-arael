@@ -134,41 +134,17 @@ class IncrementalMapperBundleAdjustmentOptionsWidget : public OptionsWidget {
                     1e-6,
                     6);
 
-#ifdef CASPAR_ENABLED
-    {
-      auto* backend_combo = new QComboBox(this);
-      backend_combo->addItem("CERES");
-      backend_combo->addItem("CASPAR");
-      backend_combo->setCurrentIndex(
-          static_cast<int>(options->mapper->ba_local_backend));
-      connect(backend_combo,
-              QOverload<int>::of(&QComboBox::currentIndexChanged),
-              [options](int idx) {
-                options->mapper->ba_local_backend =
-                    static_cast<BundleAdjustmentBackend>(idx);
-              });
-      AddWidgetRow("local_backend", backend_combo);
-    }
+#if defined(CASPAR_ENABLED) || defined(ARAEL_ENABLED)
+    AddOptionBundleAdjustmentBackend(&options->mapper->ba_local_backend,
+                                     "local_backend");
 #endif
 
     AddSpacer();
 
-#ifdef CASPAR_ENABLED
+#if defined(CASPAR_ENABLED) || defined(ARAEL_ENABLED)
     AddSection("Global Bundle Adjustment Backend");
-    {
-      auto* backend_combo = new QComboBox(this);
-      backend_combo->addItem("CERES");
-      backend_combo->addItem("CASPAR");
-      backend_combo->setCurrentIndex(
-          static_cast<int>(options->mapper->ba_global_backend));
-      connect(backend_combo,
-              QOverload<int>::of(&QComboBox::currentIndexChanged),
-              [options](int idx) {
-                options->mapper->ba_global_backend =
-                    static_cast<BundleAdjustmentBackend>(idx);
-              });
-      AddWidgetRow("global_backend", backend_combo);
-    }
+    AddOptionBundleAdjustmentBackend(&options->mapper->ba_global_backend,
+                                     "global_backend");
 #endif
 
     AddSpacer();
