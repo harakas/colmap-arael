@@ -105,32 +105,62 @@ on one thread below its residual threshold.
 
 ## Benchmark
 
-One machine, one image, two tables with two different claims.
+Two tables with different claims: the solver table times both
+backends on the same bundle adjustment problems; the pipeline table
+runs the mapper end to end with each backend as shipped.
 
-**Setup.** AMD Ryzen 9 7950X3D (16 cores), 93 GB, Linux 6.8; an
-Ubuntu 24.04 image with COLMAP upstream `fa089062` plus this tree's
-changes as of 2026-10-26, built with the backend on; Ceres 2.2.0 and
-SuiteSparse 7.6 from Ubuntu's packages, OpenBLAS 0.3.26, arael from
-source at `f7875d6f`, past 0.9.2. The mapper and every solve
-run on at most 8 threads, one run at a time. The scenes are from the
-reconstruction benchmark's datasets (ETH3D, IMC 2023 and 2024,
-BlendedMVS, TartanAir v2), extracted and matched on the machine itself;
-every column of a scene starts from the same matches. Columns: `ceres`
-and `arael` at 8 threads, `ceres-1` and `arael-1` at 1 thread, each
-backend on its defaults. The image also builds the model's previous
-layout, one camera type per camera model, on the same arael; it runs
-as `arael-per-model` and `arael-per-model-1` in the solver table and
-on the four tier-3 scenes.
+**Setup.** One machine: AMD Ryzen 9 7950X3D (16 cores), 93 GB, Linux
+6.8; an Ubuntu 24.04 container with COLMAP upstream `fa089062` and
+this branch up to `84f59d05` (the backend and the benchmark changes),
+built with `ARAEL_ENABLED=ON`; Ceres 2.2.0 and SuiteSparse 7.6 from
+Ubuntu's packages, OpenBLAS 0.3.26, arael 0.9.3. Columns: `ceres` and
+`arael` at 8 threads, `ceres-1` and `arael-1` at 1 thread, each backend
+on its defaults; one run at a time.
+
+**Scenes.** 34 scenes from the datasets of COLMAP's reconstruction
+benchmark (`benchmark/reconstruction/`), named `dataset/category/scene`
+as it names them. Each scene was extracted and matched once on the
+machine, and every column of a scene starts from the same matches. A
+scene runs in one or two camera setups: one camera per image, one
+camera shared by all images, or one camera per image folder.
+
+| dataset | scenes | camera setups |
+|---|---|---|
+| ETH3D DSLR | pipes, courtyard, delivery_area, facade, bridge | per image, shared |
+| ETH3D rig | terrains | per folder, per image |
+| ETH3D rig | delivery_area | per image |
+| IMC 2023 | bike, kyiv-puppet-theater, cyprus, piazza_san_marco, sagrada_familia, dioscuri, british_museum, lincoln_memorial_statue, brandenburg_gate | per image |
+| IMC 2024 | transp_obj_glass_cup, dioscuri, multi-temporal-temple-baalshamin, church, lizard | per image |
+| BlendedMVS | 5b908d3dc6ab78485f3d24a9, 5ba19a8a360c7c30c1c169df, 5bf3a82cd439231948877aed, 5bb8a49aea1cfa39f1aa7f75 | per image, shared |
+| BlendedMVS | 5b558a928bbfb62204e77ba2 | per image |
+| TartanAir v2, panoramas rendered as perspective views | UrbanConstruction-easy-P000, OldTownWinter-hard-P001, House-easy-P000, Office-hard-P006, AbandonedFactory-easy-P000, Hospital-hard-P000, Gascola-easy-P003, Ruins-hard-P000 | per folder |
+
+The ETH3D rig scenes run without their rig configuration: no rig
+constraint between their cameras. Four of the scenes are large:
+`imc2023/phototourism/brandenburg_gate`, `imc2024/all/lizard`,
+`eth3d/rig/delivery_area` and `blended-mvs/BlendedMVS/5b558a928bbfb62204e77ba2`.
 
 ### Solver table: the same problem for every column
 
-The problem is the mapper's own global bundle adjustment on a mapper
-snapshot: three per tier-2 scene (early, middle, end), 81 problems.
-Each column is timed around building the adjuster and solving, at the
-fewest iterations that bring its cost within 1e-5 relative of its own
-converged cost, median of 5 rounds. On 76 problems every column reaches
-the same result: the RMS reprojection errors agree to 5e-6 relative.
-The figures below are over those 76. On the other five:
+The problems are 81 global bundle adjustments of the mapper, three per
+scene from 27 scenes: every scene except pipes, bike,
+UrbanConstruction-easy-P000 and the four large ones. They come from
+one Ceres mapper run per scene (one camera per folder for TartanAir
+and `eth3d/rig/terrains`, one camera per image otherwise), which
+writes snapshots of its reconstruction (`--Mapper.snapshot_path`)
+after a registration and its local bundle adjustment: the state the
+next global bundle adjustment receives. Per scene, the first snapshot
+with at least 10 frames, the middle one and the last one ("early",
+"middle", "late").
+
+Each column solves the mapper's global bundle adjustment on the
+snapshot (trivial loss, focal length and extra parameters refined,
+principal point fixed), timed around building the adjuster and
+solving, at the fewest iterations that bring its cost within 1e-5
+relative of its own converged cost; median of 5 rounds. On 76 problems
+every column reaches the same result: the RMS reprojection errors
+agree to 5e-6 relative. The figures below are over those 76. On the
+other five:
 
 | problem | Ceres: iterations to its result, cost | arael: iterations to its result, cost |
 |---|---|---|
@@ -153,19 +183,7 @@ How many times longer Ceres took than arael on the same problem:
 | both at 1 thread | 4.0 | 1.4 | 15.3 |
 | Ceres at 8 threads, arael at 1 | 3.0 | 0.8 | 18.8 |
 
-The model's previous layout against this one, on all 81 problems: the
-same iteration count on 80 at 8 threads and 79 at 1 thread; the
-converged costs differ by 6e-16 (8 threads) and 7e-16 (1 thread)
-relative in the median, 8e-6 at most. This layout's time over the
-previous one's:
-
-| | 8 threads | 1 thread |
-|---|---|---|
-| total over the 81 problems | 1.016 | 1.022 |
-| per problem, geometric mean (min to max) | 1.005 (0.72 to 1.30) | 1.031 (0.88 to 1.19) |
-| the 24 problems of 200k observations or more | 1.028 (0.96 to 1.09) | 1.021 (0.94 to 1.08) |
-
-Three of the problems, each the last snapshot of its scene, time to
+Three of the problems, each the late snapshot of its scene, time to
 convergence in seconds:
 
 | problem | frames | observations | ceres | ceres-1 | arael | arael-1 |
@@ -176,10 +194,12 @@ convergence in seconds:
 
 ### Pipeline table: as shipped
 
-The mapper run end to end on every scene, each backend on its
-defaults: tier 1 (four form-scenes, one seed), tier 2 (36 form-scenes,
-two seeds), tier 3 (four large scenes, one seed, the 8-thread columns
-only), 312 cells. It reports what a user of each backend gets:
+The mapper run end to end with each backend on its defaults. Each
+scene other than the four large ones runs in each of its camera
+setups in all four columns, with two random seeds (one for pipes, bike
+and UrbanConstruction-easy-P000): 76 runs per column. The four large
+scenes run once, with one camera per image, in the 8-thread columns
+only: 312 runs in all. It reports what a user of each backend gets:
 registered images, pose accuracy (AUC, the area under the pose-error
 curve, at 0.5, 1, 5 and 10 degrees), reprojection quantiles, mapper
 wall time, bundle adjustment time from the records, peak memory.
@@ -187,7 +207,7 @@ wall time, bundle adjustment time from the records, peak memory.
 The table is labelled as shipped because its columns do not solve the
 same problems: the mapper's path diverges after the first solve.
 
-Totals over the 76 cells both thread counts share:
+Totals over the 76 runs of every column:
 
 | | ceres | ceres-1 | arael | arael-1 |
 |---|---|---|---|---|
@@ -196,10 +216,10 @@ Totals over the 76 cells both thread counts share:
 | bundle adjustment, local [s] | 1184 | 1618 | 317 | 694 |
 | bundle adjustment share of the mapper | 72% | 81% | 39% | 59% |
 
-How many times longer Ceres took than arael on the same cell at the
-same thread count, geometric mean over the cells of each camera form:
+How many times longer Ceres took than arael on the same run at the
+same thread count, geometric mean over the runs of each camera setup:
 
-| form | mapper, 8 threads | mapper, 1 thread | global bundle adjustment, 8 threads | global bundle adjustment, 1 thread |
+| camera setup | mapper, 8 threads | mapper, 1 thread | global bundle adjustment, 8 threads | global bundle adjustment, 1 thread |
 |---|---|---|---|---|
 | one camera per folder (TartanAir, ETH3D rig) | 3.0 | 3.0 | 6.6 | 6.0 |
 | one camera per image | 2.7 | 2.5 | 5.5 | 4.3 |
@@ -214,24 +234,19 @@ Three of the scenes, one camera per image, mapper wall time in seconds
 | imc2023/phototourism/british_museum | 176 | 525 | 847 | 144 | 215 |
 | eth3d/rig/terrains | 660 | 395 | 800 | 87 | 145 |
 
-arael's peak memory divided by Ceres's, per cell: 0.95 (geometric
+arael's peak memory divided by Ceres's, per run: 0.95 (geometric
 mean), 0.40 to 1.14.
 
 Quality: the median difference in AUC at 5 degrees between the two
-8-thread columns is 0.00 over the 80 cells, and both register the same
-number of images on 73 of them. The cells that differ go both ways; the
-one where arael is clearly worse is `imc2024/all/lizard` with one
-camera per image (tier 3, one seed): AUC5 36.4 against 56.1. On that
-cell 26 of arael's 200 global solves ran to the iteration cap. The
-model's previous layout, from the same matches and seed, ended that
-cell at AUC5 55.5 (150 global solves, 16 at the cap). At 1 thread the
-columns register the same number of images on 69 of the 76 cells; the
-one where arael is clearly worse is `imc2023/haiper/bike` with one
-camera per image, seed 0: AUC5 1.9 against 51.0, 13 of 15 images
-registered against 15.
-
-The ETH3D rig scenes run without their rig configuration in both
-forms: four cameras, no rig constraint.
+8-thread columns is 0.00 over their 80 runs, and both register the
+same number of images on 73 of them. The runs that differ go both
+ways; the one where arael is clearly worse is `imc2024/all/lizard`
+with one camera per image (one seed): AUC5 36.4 against 56.1. On that
+run 26 of arael's 200 global solves ran to the iteration cap. At 1
+thread the columns register the same number of images on 69 of the 76
+runs; the one where arael is clearly worse is `imc2023/haiper/bike`
+with one camera per image, seed 0: AUC5 1.9 against 51.0, 13 of 15
+images registered against 15.
 
 ## What the fork changes
 
