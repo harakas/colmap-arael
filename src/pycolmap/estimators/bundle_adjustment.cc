@@ -110,6 +110,10 @@ void BindBundleAdjuster(py::module& m) {
   auto PyAraelBundleAdjustmentSummary =
       py::classh<AraelBASummary, BASummary>(m, "AraelBundleAdjustmentSummary")
           .def(py::init<>())
+          .def_readwrite("kind",
+                         &AraelBASummary::kind,
+                         "What was solved: \"bundle adjustment\" or \"pose "
+                         "prior bundle adjustment\".")
           .def_readwrite("num_effective_parameters",
                          &AraelBASummary::num_effective_parameters)
           .def_readwrite("num_iterations", &AraelBASummary::num_iterations)
@@ -120,7 +124,29 @@ void BindBundleAdjuster(py::module& m) {
           .def_readwrite("termination_reason",
                          &AraelBASummary::termination_reason)
           .def_readwrite("linear_solver", &AraelBASummary::linear_solver)
-          .def_readwrite("loss", &AraelBASummary::loss);
+          .def_readwrite("loss", &AraelBASummary::loss)
+          .def_readwrite("num_threads", &AraelBASummary::num_threads)
+          .def_readwrite("wall_time",
+                         &AraelBASummary::wall_time,
+                         "Wall time of the solve, in seconds.")
+          .def_readwrite("has_timing",
+                         &AraelBASummary::has_timing,
+                         "Whether the per-phase times below were gathered "
+                         "(with a report_path or at log level 3).")
+          .def_readwrite("time_total", &AraelBASummary::time_total)
+          .def_readwrite("time_assembly", &AraelBASummary::time_assembly)
+          .def_readwrite("time_analysis", &AraelBASummary::time_analysis)
+          .def_readwrite("time_linear_solve",
+                         &AraelBASummary::time_linear_solve)
+          .def_readwrite("time_cost", &AraelBASummary::time_cost)
+          .def_readwrite("time_advance", &AraelBASummary::time_advance)
+          .def_readwrite("num_assemblies", &AraelBASummary::num_assemblies)
+          .def_readwrite("num_linear_solves",
+                         &AraelBASummary::num_linear_solves)
+          .def_readwrite("site", &AraelBASummary::site)
+          .def("json_record",
+               &AraelBASummary::JsonRecord,
+               "The solve as one line of JSON, as written to report_path.");
   MakeDataclass(PyAraelBundleAdjustmentSummary);
 #endif
 

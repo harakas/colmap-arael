@@ -107,6 +107,10 @@ pybind11_add_module(_core ${SOURCE_FILES})
 target_include_directories(_core PRIVATE ${PROJECT_SOURCE_DIR}/../src/)
 target_link_libraries(_core PRIVATE colmap::colmap glog::glog Ceres::ceres)
 target_compile_definitions(_core PRIVATE VERSION_INFO="${PROJECT_VERSION}")
+if(ARAEL_ENABLED)
+    # The installed COLMAP's arael backend: its summary type is bound.
+    target_compile_definitions(_core PRIVATE ARAEL_ENABLED)
+endif()
 
 # Set rpath to find ONNX Runtime library at runtime.
 if(ONNX_RPATH)

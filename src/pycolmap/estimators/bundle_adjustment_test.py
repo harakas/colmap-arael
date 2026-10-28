@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
+import pytest
+
 import pycolmap
 
 
@@ -334,3 +336,32 @@ def test_bundle_adjustment_pipeline(
     options = pycolmap.BundleAdjustmentOptions()
     options.print_summary = False
     pycolmap.bundle_adjustment(reconstruction, options)
+
+
+def test_arael_bundle_adjustment_summary(
+    synthetic_reconstruction: pycolmap.Reconstruction,
+) -> None:
+    # The bundle adjustment options default to the arael backend exactly
+    # when the COLMAP library is built with it.
+    if (
+        pycolmap.BundleAdjustmentOptions().backend
+        != pycolmap.BundleAdjustmentBackend.ARAEL
+    ):
+        pytest.skip("COLMAP built without the arael backend")
+    reconstruction = pycolmap.Reconstruction(synthetic_reconstruction)
+    options = pycolmap.BundleAdjustmentOptions()
+    options.print_summary = False
+    config = pycolmap.BundleAdjustmentConfig()
+    for image_id in reconstruction.reg_image_ids():
+        config.add_image(image_id)
+    config.fix_gauge(pycolmap.BundleAdjustmentGauge.TWO_CAMS_FROM_WORLD)
+    summary = pycolmap.create_default_bundle_adjuster(
+        options, config, reconstruction
+    ).solve()
+    assert isinstance(summary, pycolmap.AraelBundleAdjustmentSummary)
+    assert summary.kind == "bundle adjustment"
+    assert summary.num_residuals > 0
+    assert summary.num_iterations >= 1
+    assert summary.final_cost <= summary.initial_cost
+    assert summary.wall_time > 0
+    assert summary.json_record().startswith('{"backend": "arael"')

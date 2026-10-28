@@ -85,7 +85,10 @@ In pycolmap the same options are `BundleAdjustmentOptions.backend`
 `BundleAdjustmentOptions.arael` (`pycolmap.AraelBundleAdjustmentOptions`);
 for the mapper, `IncrementalPipelineOptions.ba_local_backend`,
 `ba_global_backend` and `ba_arael`, which it passes to every solve
-with its own iteration caps and thread count.
+with its own iteration caps and thread count. An arael solve returns a
+`pycolmap.AraelBundleAdjustmentSummary`: iterations, costs, the
+termination, the linear solver's route, wall time and, with a record
+or at log level 3, the per-phase times.
 
 **Records.** `--BundleAdjustment.report_path <file>` appends one JSON
 line per bundle adjustment of either backend: call site, backend,

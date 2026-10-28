@@ -65,6 +65,10 @@ set(MVS_ENABLED @MVS_ENABLED@)
 
 set(LSD_ENABLED @LSD_ENABLED@)
 
+# Whether COLMAP was built with the arael bundle adjustment backend;
+# consumers such as pycolmap define ARAEL_ENABLED to match.
+set(ARAEL_ENABLED @ARAEL_ENABLED@)
+
 # Whether the installed COLMAP was built with interprocedural optimization.
 # Consumers linking COLMAP's static libraries (e.g. pycolmap) must match this:
 # linking non-IPO archives into an IPO binary fails with GCC.
