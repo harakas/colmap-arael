@@ -1027,7 +1027,7 @@ TEST(PosePriorBundleAdjuster, AlignmentRobustToOutliers) {
     }
   }
 
-  auto adjuster = CreatePosePriorBundleAdjuster(
+  auto adjuster = CreatePosePriorCeresBundleAdjuster(
       ba_options, prior_ba_options, ba_config, pose_priors, reconstruction);
   auto summary = adjuster->Solve();
   ASSERT_TRUE(summary->IsSolutionUsable());
@@ -1060,11 +1060,11 @@ TEST(PosePriorBundleAdjuster, InsufficientPriorsUseTwoCameraGauge) {
   std::vector<PosePrior> pose_priors = database->ReadAllPosePriors();
   pose_priors.resize(2);
   auto adjuster =
-      CreatePosePriorBundleAdjuster(BundleAdjustmentOptions(),
-                                    PosePriorBundleAdjustmentOptions(),
-                                    config,
-                                    std::move(pose_priors),
-                                    reconstruction);
+      CreatePosePriorCeresBundleAdjuster(BundleAdjustmentOptions(),
+                                         PosePriorBundleAdjustmentOptions(),
+                                         config,
+                                         std::move(pose_priors),
+                                         reconstruction);
 
   EXPECT_EQ(adjuster->Config().FixedGauge(),
             BundleAdjustmentGauge::TWO_CAMS_FROM_WORLD);
@@ -1105,7 +1105,7 @@ TEST(PosePriorBundleAdjuster, MissingPositionCov) {
     }
   }
 
-  auto adjuster = CreatePosePriorBundleAdjuster(
+  auto adjuster = CreatePosePriorCeresBundleAdjuster(
       ba_options, prior_ba_options, ba_config, pose_priors, reconstruction);
   auto summary = adjuster->Solve();
   ASSERT_TRUE(summary->IsSolutionUsable());
@@ -1143,11 +1143,11 @@ TEST(PosePriorBundleAdjuster, ConstantSensorFromRigWithMissingPositionCov) {
   }
 
   auto adjuster =
-      CreatePosePriorBundleAdjuster(ba_options,
-                                    PosePriorBundleAdjustmentOptions(),
-                                    ba_config,
-                                    std::move(pose_priors),
-                                    reconstruction);
+      CreatePosePriorCeresBundleAdjuster(ba_options,
+                                         PosePriorBundleAdjustmentOptions(),
+                                         ba_config,
+                                         std::move(pose_priors),
+                                         reconstruction);
   ceres::Problem& problem = GetCeresProblem(*adjuster);
 
   for (auto& [_, rig] : reconstruction.Rigs()) {
@@ -1203,7 +1203,7 @@ TEST(PosePriorBundleAdjuster, OptimizationRobustToOutliers) {
     }
   }
 
-  auto adjuster = CreatePosePriorBundleAdjuster(
+  auto adjuster = CreatePosePriorCeresBundleAdjuster(
       ba_options, prior_ba_options, ba_config, pose_priors, reconstruction);
   auto summary = adjuster->Solve();
   ASSERT_TRUE(summary->IsSolutionUsable());

@@ -8,10 +8,11 @@ local and global bundle adjustments and the `bundle_adjuster` command
 on the same problem the Ceres backend solves: the 2-row reprojection
 residual under COLMAP's loss functions, every COLMAP camera model, rigs
 with their sensor-from-rig poses, COLMAP's constant-parameter and
-gauge-fixing settings. A registration's pose refinement
-(`RefineAbsolutePose`) and the pose-prior bundle adjuster stay with
-Ceres; the structure-less registration's bundle adjustment follows the
-backend.
+gauge-fixing settings, and position priors (`colmap pose_prior_mapper`,
+`--Mapper.use_prior_position`) with the Ceres backend's alignment,
+weighting and robust loss. A registration's pose refinement
+(`RefineAbsolutePose`) stays with Ceres; the structure-less
+registration's bundle adjustment follows the backend.
 
 The backend is a model crate (`src/lib.rs`), from which arael's build
 tool generates a C library and a C++ interface (`capi/`, `cxx/`, both

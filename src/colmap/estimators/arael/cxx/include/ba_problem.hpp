@@ -141,6 +141,13 @@ struct PoseRef {
     bool valid() const { return raw != UINT32_MAX; }
 };
 /// Typed handle into the collection that issued it -- the C++
+/// spelling of Rust's `Ref<PositionPrior>`. Default-constructed it is the
+/// null sentinel (same as Rust `Ref::default()`).
+struct PositionPriorRef {
+    uint32_t raw = UINT32_MAX;
+    bool valid() const { return raw != UINT32_MAX; }
+};
+/// Typed handle into the collection that issued it -- the C++
 /// spelling of Rust's `Ref<RigCam>`. Default-constructed it is the
 /// null sentinel (same as Rust `Ref::default()`).
 struct RigCamRef {
@@ -175,6 +182,13 @@ struct RigObservationRef {
     uint32_t raw = UINT32_MAX;
     bool valid() const { return raw != UINT32_MAX; }
 };
+/// Typed handle into the collection that issued it -- the C++
+/// spelling of Rust's `Ref<RigPositionPrior>`. Default-constructed it is the
+/// null sentinel (same as Rust `Ref::default()`).
+struct RigPositionPriorRef {
+    uint32_t raw = UINT32_MAX;
+    bool valid() const { return raw != UINT32_MAX; }
+};
 
 namespace ffi {
 struct BaProblem;
@@ -185,11 +199,13 @@ struct Image;
 struct Observation;
 struct Point;
 struct Pose;
+struct PositionPrior;
 struct RigCam;
 struct RigFixedImage;
 struct RigFixedObservation;
 struct RigImage;
 struct RigObservation;
+struct RigPositionPrior;
 
 extern "C" {
 uint32_t ba_problem_cam_model(const Cam*);
@@ -290,6 +306,10 @@ vect3d ba_problem_point_pos(const Point*);
 void ba_problem_point_set_pos(Point*, vect3d);
 bool ba_problem_point_pos_optimize(const Point*);
 void ba_problem_point_pos_set_optimize(Point*, bool);
+vect3d ba_problem_position_prior_prior(const PositionPrior*);
+void ba_problem_position_prior_set_prior(PositionPrior*, vect3d);
+matrix3d ba_problem_position_prior_sqrt_info(const PositionPrior*);
+void ba_problem_position_prior_set_sqrt_info(PositionPrior*, matrix3d);
 uint32_t ba_problem_rig_cam_model(const RigCam*);
 void ba_problem_rig_cam_set_model(RigCam*, uint32_t);
 uint32_t ba_problem_rig_cam_check(const RigCam*);
@@ -422,6 +442,18 @@ RigImage* ba_problem_pose_rig_images_at(Pose*, uint32_t);
 bool ba_problem_pose_rig_images_pop(Pose*);
 void ba_problem_pose_rig_images_clear(Pose*);
 void ba_problem_pose_rig_images_truncate(Pose*, uint32_t);
+bool ba_problem_pose_has_prior(const Pose*);
+PositionPrior* ba_problem_pose_make_prior(Pose*);
+void ba_problem_pose_clear_prior(Pose*);
+PositionPrior* ba_problem_pose_prior(Pose*);
+uint32_t ba_problem_rig_position_prior_pose(const RigPositionPrior*);
+void ba_problem_rig_position_prior_set_pose(RigPositionPrior*, uint32_t);
+uint32_t ba_problem_rig_position_prior_cam(const RigPositionPrior*);
+void ba_problem_rig_position_prior_set_cam(RigPositionPrior*, uint32_t);
+vect3d ba_problem_rig_position_prior_prior(const RigPositionPrior*);
+void ba_problem_rig_position_prior_set_prior(RigPositionPrior*, vect3d);
+matrix3d ba_problem_rig_position_prior_sqrt_info(const RigPositionPrior*);
+void ba_problem_rig_position_prior_set_sqrt_info(RigPositionPrior*, matrix3d);
 struct BaProblemCov;
 int32_t ba_problem_assemble_covariance(BaProblem*, uint32_t, BaProblemCov**);
 int32_t ba_problem_assemble_covariance_with(BaProblem*, uint32_t, uint32_t, uint32_t, BaProblemCov**);
@@ -534,12 +566,29 @@ uint32_t ba_problem_rig_fixed_images_last_ref(const BaProblem*);
 RigFixedImage* ba_problem_rig_fixed_images_get(BaProblem*, uint32_t);
 bool ba_problem_rig_fixed_images_contains(const BaProblem*, uint32_t);
 RigFixedImage* ba_problem_rig_fixed_images_try_get(BaProblem*, uint32_t);
+uint32_t ba_problem_rig_priors_len(const BaProblem*);
+void ba_problem_rig_priors_reserve(BaProblem*, uint32_t);
+RigPositionPrior* ba_problem_rig_priors_push(BaProblem*);
+RigPositionPrior* ba_problem_rig_priors_at(BaProblem*, uint32_t);
+bool ba_problem_rig_priors_pop(BaProblem*);
+void ba_problem_rig_priors_clear(BaProblem*);
+void ba_problem_rig_priors_truncate(BaProblem*, uint32_t);
+uint32_t ba_problem_rig_priors_ref_at(const BaProblem*, uint32_t);
+uint32_t ba_problem_rig_priors_first_ref(const BaProblem*);
+uint32_t ba_problem_rig_priors_last_ref(const BaProblem*);
+RigPositionPrior* ba_problem_rig_priors_get(BaProblem*, uint32_t);
+bool ba_problem_rig_priors_contains(const BaProblem*, uint32_t);
+RigPositionPrior* ba_problem_rig_priors_try_get(BaProblem*, uint32_t);
 uint32_t ba_problem_loss(const BaProblem*);
 void ba_problem_set_loss(BaProblem*, uint32_t);
 double ba_problem_k2(const BaProblem*);
 void ba_problem_set_k2(BaProblem*, double);
 double ba_problem_w(const BaProblem*);
 void ba_problem_set_w(BaProblem*, double);
+uint32_t ba_problem_prior_loss(const BaProblem*);
+void ba_problem_set_prior_loss(BaProblem*, uint32_t);
+double ba_problem_prior_k2(const BaProblem*);
+void ba_problem_set_prior_k2(BaProblem*, double);
 double ba_problem_cost(BaProblem*);
 int32_t ba_problem_solve_band(BaProblem*, uint32_t, const LmConfig*, LmResultT<double>*);
 void ba_problem_lm_config(uint32_t, LmConfig*);
@@ -1030,6 +1079,26 @@ public:
     void set_pos_optimize(bool v) { ffi::ba_problem_point_pos_set_optimize(h_, v); }
 private:
     ffi::Point* h_;
+};
+
+/// A `PositionPrior` in its owner's storage; a thin pointer wrapper (validity
+/// follows the storage -- see the owning container).
+class PositionPrior {
+public:
+    /// Optimized parameters this entity contributes to the solve.
+    static constexpr uint32_t param_count = 0;
+    PositionPrior() : h_(nullptr) {}
+    explicit PositionPrior(ffi::PositionPrior* p) : h_(p) {}
+    /// False when default-constructed (e.g. inside an empty option).
+    bool valid() const { return h_ != nullptr; }
+    /// The underlying C pointer -- the relaxed escape hatch.
+    ffi::PositionPrior* raw() const { return h_; }
+    vect3d prior() const { return ffi::ba_problem_position_prior_prior(h_); }
+    void set_prior(vect3d v) { ffi::ba_problem_position_prior_set_prior(h_, v); }
+    matrix3d sqrt_info() const { return ffi::ba_problem_position_prior_sqrt_info(h_); }
+    void set_sqrt_info(matrix3d v) { ffi::ba_problem_position_prior_set_sqrt_info(h_, v); }
+private:
+    ffi::PositionPrior* h_;
 };
 
 /// A `RigCam` in its owner's storage; a thin pointer wrapper (validity
@@ -1560,8 +1629,39 @@ public:
     void set_tz_optimize(bool v) { ffi::ba_problem_pose_tz_set_optimize(h_, v); }
     PoseImagesVec images() { return PoseImagesVec(h_); }
     PoseRigImagesVec rig_images() { return PoseRigImagesVec(h_); }
+    bool has_prior() const { return ffi::ba_problem_pose_has_prior(h_); }
+    PositionPrior make_prior() { return PositionPrior(ffi::ba_problem_pose_make_prior(h_)); }
+    void clear_prior() { ffi::ba_problem_pose_clear_prior(h_); }
+    option<PositionPrior> prior() {
+        ffi::PositionPrior* p = ffi::ba_problem_pose_prior(h_);
+        return p ? option<PositionPrior>(PositionPrior(p)) : option<PositionPrior>();
+    }
 private:
     ffi::Pose* h_;
+};
+
+/// A `RigPositionPrior` in its owner's storage; a thin pointer wrapper (validity
+/// follows the storage -- see the owning container).
+class RigPositionPrior {
+public:
+    /// Optimized parameters this entity contributes to the solve.
+    static constexpr uint32_t param_count = 0;
+    RigPositionPrior() : h_(nullptr) {}
+    explicit RigPositionPrior(ffi::RigPositionPrior* p) : h_(p) {}
+    /// False when default-constructed (e.g. inside an empty option).
+    bool valid() const { return h_ != nullptr; }
+    /// The underlying C pointer -- the relaxed escape hatch.
+    ffi::RigPositionPrior* raw() const { return h_; }
+    PoseRef pose() const { return PoseRef{ffi::ba_problem_rig_position_prior_pose(h_)}; }
+    void set_pose(PoseRef r) { ffi::ba_problem_rig_position_prior_set_pose(h_, r.raw); }
+    RigCamRef cam() const { return RigCamRef{ffi::ba_problem_rig_position_prior_cam(h_)}; }
+    void set_cam(RigCamRef r) { ffi::ba_problem_rig_position_prior_set_cam(h_, r.raw); }
+    vect3d prior() const { return ffi::ba_problem_rig_position_prior_prior(h_); }
+    void set_prior(vect3d v) { ffi::ba_problem_rig_position_prior_set_prior(h_, v); }
+    matrix3d sqrt_info() const { return ffi::ba_problem_rig_position_prior_sqrt_info(h_); }
+    void set_sqrt_info(matrix3d v) { ffi::ba_problem_rig_position_prior_set_sqrt_info(h_, v); }
+private:
+    ffi::RigPositionPrior* h_;
 };
 
 /// An assembled covariance (root.assemble_covariance), OWNED: copies
@@ -2308,6 +2408,100 @@ private:
     ffi::BaProblem* h_;
 };
 
+/// `BaProblem.rig_priors`. Element pointers are STABLE across pushes (chunked storage).
+class BaProblemRigPriorsVec {
+public:
+    explicit BaProblemRigPriorsVec(ffi::BaProblem* h) : h_(h) {}
+    uint32_t size() const { return ffi::ba_problem_rig_priors_len(h_); }
+    bool empty() const { return size() == 0; }
+    void reserve(uint32_t additional) { ffi::ba_problem_rig_priors_reserve(h_, additional); }
+    /// Appends a default element and returns a wrapper for it.
+    ///
+    /// The wrapper holds a pointer INTO the collection, so it follows the
+    /// std::vector rule: any later push may reallocate, and every wrapper
+    /// taken before it -- including wrappers into collections nested inside
+    /// these elements -- is then dangling. Either reserve() the count up
+    /// front, or re-take the wrapper with operator[] after the growth.
+    /// To hold on to an element across pushes, keep its Ref, not a wrapper.
+    RigPositionPrior push() { return RigPositionPrior(ffi::ba_problem_rig_priors_push(h_)); }
+    /// Wrapper for element `i`; see push() on how long it stays valid.
+    RigPositionPrior operator[](uint32_t i) { return RigPositionPrior(ffi::ba_problem_rig_priors_at(h_, i)); }
+    /// Front/back of a non-empty vec (empty = UB, like STL).
+    RigPositionPrior front() { return (*this)[0]; }
+    RigPositionPrior back() { return (*this)[size() - 1]; }
+    /// Drops the last element; false when already empty.
+    bool pop() { return ffi::ba_problem_rig_priors_pop(h_); }
+    void clear() { ffi::ba_problem_rig_priors_clear(h_); }
+    void truncate(uint32_t n) { ffi::ba_problem_rig_priors_truncate(h_, n); }
+    RigPositionPriorRef ref_at(uint32_t i) const { return RigPositionPriorRef{ffi::ba_problem_rig_priors_ref_at(h_, i)}; }
+    /// Ref of the first/last element; null when empty.
+    RigPositionPriorRef first_ref() const { return RigPositionPriorRef{ffi::ba_problem_rig_priors_first_ref(h_)}; }
+    RigPositionPriorRef last_ref() const { return RigPositionPriorRef{ffi::ba_problem_rig_priors_last_ref(h_)}; }
+    RigPositionPrior get(RigPositionPriorRef r) { return RigPositionPrior(ffi::ba_problem_rig_priors_get(h_, r.raw)); }
+    /// True while r addresses a live element here.
+    bool contains(RigPositionPriorRef r) const { return ffi::ba_problem_rig_priors_contains(h_, r.raw); }
+    /// Like get, but empty for a stale or foreign ref.
+    option<RigPositionPrior> try_get(RigPositionPriorRef r) {
+        ffi::RigPositionPrior* p = ffi::ba_problem_rig_priors_try_get(h_, r.raw);
+        return p ? option<RigPositionPrior>(RigPositionPrior(p)) : option<RigPositionPrior>();
+    }
+    /// Bidirectional iterator. Standard C++ contract: modifying the
+    /// container while iterating is undefined behavior. Dereference
+    /// yields a value wrapper (RigPositionPrior), like vector<bool> --
+    /// reference is a value type.
+    class iterator {
+    public:
+        using iterator_category = std::bidirectional_iterator_tag;
+        using value_type = RigPositionPrior;
+        using difference_type = std::ptrdiff_t;
+        using reference = RigPositionPrior;
+        struct arrow { RigPositionPrior v; RigPositionPrior* operator->() { return &v; } };
+        using pointer = arrow;
+
+        iterator() : h_(nullptr), i_(0) {}
+        iterator(ffi::BaProblem* h, uint32_t i) : h_(h), i_(i) {}
+        RigPositionPrior operator*() const { return RigPositionPrior(ffi::ba_problem_rig_priors_at(h_, i_)); }
+        arrow operator->() const { return arrow{**this}; }
+        iterator& operator++() { ++i_; return *this; }
+        iterator& operator--() { --i_; return *this; }
+        iterator operator++(int) { iterator t = *this; ++*this; return t; }
+        iterator operator--(int) { iterator t = *this; --*this; return t; }
+        bool operator==(const iterator& o) const { return i_ == o.i_; }
+        bool operator!=(const iterator& o) const { return i_ != o.i_; }
+    private:
+        ffi::BaProblem* h_;
+        uint32_t i_;
+    };
+    iterator begin() { return iterator(h_, 0); }
+    iterator end() { return iterator(h_, size()); }
+    class reverse_iterator {
+    public:
+        using iterator_category = std::bidirectional_iterator_tag;
+        using value_type = RigPositionPrior;
+        using difference_type = std::ptrdiff_t;
+        using reference = RigPositionPrior;
+        using pointer = iterator::arrow;
+
+        reverse_iterator() {}
+        explicit reverse_iterator(iterator base) : base_(base) {}
+        iterator base() const { return base_; }
+        RigPositionPrior operator*() const { iterator t = base_; --t; return *t; }
+        pointer operator->() const { return pointer{**this}; }
+        reverse_iterator& operator++() { --base_; return *this; }
+        reverse_iterator& operator--() { ++base_; return *this; }
+        reverse_iterator operator++(int) { reverse_iterator t = *this; ++*this; return t; }
+        reverse_iterator operator--(int) { reverse_iterator t = *this; --*this; return t; }
+        bool operator==(const reverse_iterator& o) const { return base_ == o.base_; }
+        bool operator!=(const reverse_iterator& o) const { return base_ != o.base_; }
+    private:
+        iterator base_;
+    };
+    reverse_iterator rbegin() { return reverse_iterator(end()); }
+    reverse_iterator rend() { return reverse_iterator(begin()); }
+private:
+    ffi::BaProblem* h_;
+};
+
 /// The `BaProblem` model. Owns the Rust-side object; move-only.
 class BaProblem {
 public:
@@ -2331,12 +2525,17 @@ public:
     BaProblemRigCamsVec rig_cams() { return BaProblemRigCamsVec(h_); }
     BaProblemFixedImagesVec fixed_images() { return BaProblemFixedImagesVec(h_); }
     BaProblemRigFixedImagesVec rig_fixed_images() { return BaProblemRigFixedImagesVec(h_); }
+    BaProblemRigPriorsVec rig_priors() { return BaProblemRigPriorsVec(h_); }
     uint32_t loss() const { return ffi::ba_problem_loss(h_); }
     void set_loss(uint32_t v) { ffi::ba_problem_set_loss(h_, v); }
     double k2() const { return ffi::ba_problem_k2(h_); }
     void set_k2(double v) { ffi::ba_problem_set_k2(h_, v); }
     double w() const { return ffi::ba_problem_w(h_); }
     void set_w(double v) { ffi::ba_problem_set_w(h_, v); }
+    uint32_t prior_loss() const { return ffi::ba_problem_prior_loss(h_); }
+    void set_prior_loss(uint32_t v) { ffi::ba_problem_set_prior_loss(h_, v); }
+    double prior_k2() const { return ffi::ba_problem_prior_k2(h_); }
+    void set_prior_k2(double v) { ffi::ba_problem_set_prior_k2(h_, v); }
 
     /// Ok(LmResult) for every healthy termination, Err(SolveError) for
     /// a solve failure (-1); a caught Rust panic throws PanicError.

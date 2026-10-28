@@ -104,8 +104,24 @@ std::unique_ptr<BundleAdjuster> CreateDefaultAraelBundleAdjuster(
     const BundleAdjustmentConfig& config,
     Reconstruction& reconstruction);
 
+// Bundle adjustment with position priors on arael, as the Ceres backend's
+// pose-prior adjuster: with at least three usable priors and an alignment
+// to them, the reconstruction is aligned, normalized with its scale
+// fixed, solved with a prior on the camera centre of every image whose
+// pose is a parameter, and transformed back; otherwise a plain solve
+// with the gauge fixed by two cameras.
+std::unique_ptr<BundleAdjuster> CreatePosePriorAraelBundleAdjuster(
+    const BundleAdjustmentOptions& options,
+    const PosePriorBundleAdjustmentOptions& prior_options,
+    const BundleAdjustmentConfig& config,
+    std::vector<PosePrior> pose_priors,
+    Reconstruction& reconstruction);
+
 #ifdef ARAEL_ENABLED
 struct AraelBundleAdjustmentSummary : public BundleAdjustmentSummary {
+  // What was solved, for the record: "bundle adjustment" or "pose prior
+  // bundle adjustment".
+  std::string kind = "bundle adjustment";
   // Number of optimized scalar parameters, rotations counted as three.
   int num_effective_parameters = 0;
   int num_iterations = 0;

@@ -435,16 +435,9 @@ std::unique_ptr<BundleAdjuster> CreatePosePriorBundleAdjuster(
              "CASPAR_ENABLED; rebuild with -DCASPAR_ENABLED=ON to use it";
 #endif
       return nullptr;
-    case BundleAdjustmentBackend::ARAEL: {
+    case BundleAdjustmentBackend::ARAEL:
 #ifdef ARAEL_ENABLED
-      // arael has no pose priors and is the default backend in this build,
-      // so pose prior bundle adjustment runs on Ceres.
-      LOG_FIRST_N(WARNING, 1) << "arael BA backend does not support pose "
-                                 "priors; pose prior bundle adjustment "
-                                 "runs on Ceres";
-      BundleAdjustmentOptions ceres_options = options;
-      ceres_options.backend = BundleAdjustmentBackend::CERES;
-      return CreatePosePriorCeresBundleAdjuster(ceres_options,
+      return CreatePosePriorAraelBundleAdjuster(options,
                                                 prior_options,
                                                 config,
                                                 std::move(pose_priors),
@@ -455,7 +448,6 @@ std::unique_ptr<BundleAdjuster> CreatePosePriorBundleAdjuster(
              "ARAEL_ENABLED; rebuild with -DARAEL_ENABLED=ON to use it";
       return nullptr;
 #endif
-    }
   }
   LOG(FATAL_THROW) << "Unknown bundle adjustment backend: "
                    << static_cast<int>(options.backend);

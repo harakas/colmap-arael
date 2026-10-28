@@ -2,6 +2,7 @@
 
 #include "colmap/estimators/bundle_adjustment_arael.h"
 
+#include "colmap/estimators/alignment.h"
 #include "colmap/estimators/bundle_adjustment_ceres.h"
 #include "colmap/estimators/ceres_loss_function.h"
 #include "colmap/sensor/models.h"
@@ -9,6 +10,7 @@
 #include "colmap/util/logging.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <functional>
@@ -31,6 +33,8 @@ struct Model {
   using Problem = colmap_arael::BaProblem;
   using Pose = colmap_arael::Pose;
   using Point = colmap_arael::Point;
+  using PositionPrior = colmap_arael::PositionPrior;
+  using RigPositionPrior = colmap_arael::RigPositionPrior;
   using LmConfig = colmap_arael::LmConfig;
   using SparseOptions = colmap_arael::SparseOptions;
   using SolveResult = colmap_arael::SolveResult;
@@ -474,12 +478,65 @@ class AraelBundleAdjuster : public BundleAdjuster {
     }
   }
 
+  // The images whose observations are in the problem.
+  const std::set<image_t>& ParameterizedImageIds() const {
+    return parameterized_image_ids_;
+  }
+
+  // What the solve records and reports call the problem.
+  void SetKind(std::string kind) { kind_ = std::move(kind); }
+
+  // The position priors' loss, numbered and scaled as the observations'.
+  void SetPositionPriorLoss(const CeresLossFunctionType type,
+                            const double scale) {
+    THROW_CHECK(IsValidCeresLossFunction(type, scale, /*weight=*/1.0));
+    problem_.set_prior_loss(static_cast<uint32_t>(type));
+    problem_.set_prior_k2(scale * scale);
+  }
+
+  // A prior on the camera centre of an image in ParameterizedImageIds():
+  // the residual is `sqrt_info * (position - centre)`. As in the Ceres
+  // backend, an image whose frame pose and camera-to-rig pose are both
+  // constant gets none.
+  void AddPositionPrior(const image_t image_id,
+                        const Eigen::Vector3d& position,
+                        const Eigen::Matrix3d& sqrt_info) {
+    const Image& image = reconstruction_.Image(image_id);
+    const bool constant_sensor_from_rig =
+        image.IsRefInFrame() || !options_.refine_sensor_from_rig ||
+        config_.HasConstantSensorFromRigPose(image.CameraPtr()->SensorId());
+    const bool constant_rig_from_world =
+        !options_.refine_rig_from_world ||
+        config_.HasConstantRigFromWorldPose(image.FrameId());
+    if (constant_sensor_from_rig && constant_rig_from_world) {
+      return;
+    }
+    const uint32_t pose_index = frame_poses_.at(image.FrameId());
+    const CameraSlot& camera = cameras_.at(image.CameraId());
+    if (camera.rig) {
+      M::RigPositionPrior prior = problem_.rig_priors().push();
+      prior.set_pose(problem_.poses().ref_at(pose_index));
+      prior.set_cam(problem_.rig_cams().ref_at(camera.index));
+      prior.set_prior(arael::vect3<Scalar>::from_eigen(position));
+      prior.set_sqrt_info(arael::matrix3<Scalar>::from_eigen(sqrt_info));
+    } else {
+      M::Pose pose = problem_.poses()[pose_index];
+      THROW_CHECK(!pose.has_prior())
+          << "Duplicate position prior for image " << image_id;
+      M::PositionPrior prior = pose.make_prior();
+      prior.set_prior(arael::vect3<Scalar>::from_eigen(position));
+      prior.set_sqrt_info(arael::matrix3<Scalar>::from_eigen(sqrt_info));
+    }
+    num_position_priors_ += 1;
+  }
+
   std::shared_ptr<BundleAdjustmentSummary> Solve() override {
     if (num_observations_ == 0) {
       return std::make_shared<BundleAdjustmentSummary>();
     }
 
     auto summary = std::make_shared<AraelBundleAdjustmentSummary>();
+    summary->kind = kind_;
     summary->loss = DescribeLossFunction(options_);
     summary->site = options_.report_site;
     CountResidualsAndParameters(&summary->num_residuals,
@@ -1121,6 +1178,7 @@ class AraelBundleAdjuster : public BundleAdjuster {
                         num_rig_cam_params,
                         /*pose_variable=*/false,
                         num_residuals);
+    *num_residuals += 3 * static_cast<int>(num_position_priors_);
   }
 
   static void FillSummary(const M::LmResult& result,
@@ -1190,6 +1248,111 @@ class AraelBundleAdjuster : public BundleAdjuster {
   std::set<camera_t> parameterized_camera_ids_;
   std::set<image_t> parameterized_image_ids_;
   size_t num_observations_ = 0;
+  size_t num_position_priors_ = 0;
+  std::string kind_ = "bundle adjustment";
+};
+
+// The Ceres backend's pose-prior adjuster (PosePriorBundleAdjuster in
+// bundle_adjustment_ceres.cc) on arael: the same priors, alignment,
+// normalization and prior residuals.
+class AraelPosePriorBundleAdjuster : public BundleAdjuster {
+ public:
+  AraelPosePriorBundleAdjuster(
+      const BundleAdjustmentOptions& options,
+      const PosePriorBundleAdjustmentOptions& prior_options,
+      const BundleAdjustmentConfig& config,
+      std::vector<PosePrior> pose_priors,
+      Reconstruction& reconstruction)
+      : BundleAdjuster(options, config),
+        prior_options_(prior_options),
+        pose_priors_(std::move(pose_priors)),
+        reconstruction_(reconstruction) {
+    VLOG(2) << "Creating arael pose prior bundle adjuster";
+    THROW_CHECK(prior_options_.Check());
+
+    pose_priors_.erase(
+        std::remove_if(pose_priors_.begin(),
+                       pose_priors_.end(),
+                       [this](const PosePrior& pose_prior) {
+                         return !pose_prior.HasPosition() ||
+                                pose_prior.corr_data_id.sensor_id.type !=
+                                    SensorType::CAMERA ||
+                                !config_.HasImage(pose_prior.corr_data_id.id);
+                       }),
+        pose_priors_.end());
+
+    const bool use_prior_position =
+        pose_priors_.size() >= 3 && AlignReconstruction();
+    if (use_prior_position) {
+      normalized_from_metric_ = reconstruction_.Normalize(/*fixed_scale=*/true);
+    } else {
+      config_.FixGauge(BundleAdjustmentGauge::TWO_CAMS_FROM_WORLD);
+    }
+
+    adjuster_ = std::make_unique<AraelBundleAdjuster>(
+        options_, config_, reconstruction);
+    adjuster_->SetKind("pose prior bundle adjustment");
+    if (use_prior_position) {
+      adjuster_->SetPositionPriorLoss(
+          prior_options_.ceres->prior_position_loss_function_type,
+          prior_options_.ceres->prior_position_loss_scale);
+      for (const PosePrior& pose_prior : pose_priors_) {
+        if (adjuster_->ParameterizedImageIds().count(
+                pose_prior.corr_data_id.id) > 0) {
+          adjuster_->AddPositionPrior(
+              pose_prior.corr_data_id.id,
+              normalized_from_metric_ * pose_prior.position,
+              PriorSqrtInfo(pose_prior));
+        }
+      }
+    }
+  }
+
+  std::shared_ptr<BundleAdjustmentSummary> Solve() override {
+    std::shared_ptr<BundleAdjustmentSummary> summary = adjuster_->Solve();
+    reconstruction_.Transform(Inverse(normalized_from_metric_));
+    return summary;
+  }
+
+ private:
+  // The whitening of a prior in the normalized frame: the transposed
+  // lower Cholesky factor of its inverse covariance, or the fallback
+  // standard deviation's inverse when it has no covariance.
+  Eigen::Matrix3d PriorSqrtInfo(const PosePrior& pose_prior) const {
+    if (pose_prior.HasPositionCov()) {
+      const Eigen::Matrix3d scaled_rotation =
+          normalized_from_metric_.scale() *
+          normalized_from_metric_.rotation().toRotationMatrix();
+      const Eigen::Matrix3d covariance = scaled_rotation *
+                                         pose_prior.position_covariance *
+                                         scaled_rotation.transpose();
+      return covariance.inverse().llt().matrixL().transpose();
+    }
+    return Eigen::Matrix3d::Identity() /
+           (normalized_from_metric_.scale() *
+            prior_options_.prior_position_fallback_stddev);
+  }
+
+  bool AlignReconstruction() {
+    Sim3d metric_from_orig;
+    if (!AlignReconstructionToPosePriors(
+            reconstruction_,
+            pose_priors_,
+            prior_options_.alignment_ransac_options,
+            prior_options_.prior_position_fallback_stddev,
+            &metric_from_orig)) {
+      LOG(WARNING) << "Alignment w.r.t. prior positions failed";
+      return false;
+    }
+    reconstruction_.Transform(metric_from_orig);
+    return true;
+  }
+
+  PosePriorBundleAdjustmentOptions prior_options_;
+  std::vector<PosePrior> pose_priors_;
+  Reconstruction& reconstruction_;
+  Sim3d normalized_from_metric_;
+  std::unique_ptr<AraelBundleAdjuster> adjuster_;
 };
 
 }  // namespace
@@ -1201,7 +1364,11 @@ std::string AraelBundleAdjustmentSummary::BriefReport() const {
     return num_residuals > 0 ? std::sqrt(cost / num_residuals) : 0.0;
   };
   std::ostringstream report;
-  report << "Bundle adjustment report (arael)\n"
+  std::string title = kind;
+  if (!title.empty()) {
+    title[0] = static_cast<char>(std::toupper(title[0]));
+  }
+  report << title << " report (arael)\n"
          << "    Residuals : " << num_residuals << "\n"
          << "   Parameters : " << num_effective_parameters << "\n"
          << "   Iterations : " << num_iterations << " ("
@@ -1229,7 +1396,7 @@ std::string AraelBundleAdjustmentSummary::BriefReport() const {
 std::string AraelBundleAdjustmentSummary::JsonRecord() const {
   std::ostringstream line;
   line << std::setprecision(17);
-  line << "{\"backend\": \"arael\", \"kind\": \"bundle adjustment\""
+  line << "{\"backend\": \"arael\", \"kind\": " << JsonQuoted(kind)
        << ", \"site\": " << JsonQuoted(site)
        << ", \"residuals\": " << num_residuals
        << ", \"parameters\": " << num_effective_parameters
@@ -1263,6 +1430,18 @@ std::unique_ptr<BundleAdjuster> CreateDefaultAraelBundleAdjuster(
   THROW_CHECK(options.arael != nullptr);
   THROW_CHECK(options.arael->Check());
   return std::make_unique<AraelBundleAdjuster>(options, config, reconstruction);
+}
+
+std::unique_ptr<BundleAdjuster> CreatePosePriorAraelBundleAdjuster(
+    const BundleAdjustmentOptions& options,
+    const PosePriorBundleAdjustmentOptions& prior_options,
+    const BundleAdjustmentConfig& config,
+    std::vector<PosePrior> pose_priors,
+    Reconstruction& reconstruction) {
+  THROW_CHECK(options.arael != nullptr);
+  THROW_CHECK(options.arael->Check());
+  return std::make_unique<AraelPosePriorBundleAdjuster>(
+      options, prior_options, config, std::move(pose_priors), reconstruction);
 }
 
 }  // namespace colmap

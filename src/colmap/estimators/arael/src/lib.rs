@@ -23,6 +23,11 @@
 //! machine-epsilon depth, so a point behind a camera feels no pull from
 //! that view, and the pipeline's filters drop the observation.
 //!
+//! Position priors, for COLMAP's pose-prior bundle adjustment, add a
+//! 3-row residual per image: the prior position minus the camera centre,
+//! whitened by the prior's covariance, under their own loss
+//! (`prior_loss`, `prior_k2`).
+//!
 //! Camera models: one camera entity for every COLMAP model. A camera
 //! holds its model as data (`model`), two focal lengths, the principal
 //! point and twelve extra parameters, the most any model has. The
@@ -356,6 +361,8 @@ pub struct Pose<T: Float> {
     pub tz: Param<T>,
     pub images: std::vec::Vec<Image<T>>,
     pub rig_images: std::vec::Vec<RigImage<T>>,
+    /// The position prior of the frame's reference camera, if any.
+    pub prior: Option<PositionPrior<T>>,
     pub hb: SelfBlock<Pose<T>, T>,
 }
 
@@ -578,6 +585,53 @@ pub struct RigFixedObservation<T: Float> {
 }
 
 // ---------------------------------------------------------------------------
+// Position priors: the prior position of a camera centre against the
+// camera centre, whitened by `sqrt_info` (the transposed lower Cholesky
+// factor of the prior's inverse covariance), under the root's prior
+// loss.
+// ---------------------------------------------------------------------------
+
+/// The position prior of a frame's reference camera, whose centre is
+/// the frame's: `-R^T t` of its world-to-rig pose.
+#[arael::model]
+#[arael(constraint(parent.hb, name = "prior",
+    loss = |s| colmap_loss(root.prior_loss, s, root.prior_k2), {
+    let t = vect3sym::from_components(pose.tx, pose.ty, pose.tz);
+    let r = positionprior.sqrt_info
+        * (positionprior.prior + pose.rot.rotation_matrix().transpose() * t);
+    [r.x, r.y, r.z]
+}))]
+#[derive(Default)]
+pub struct PositionPrior<T: Float> {
+    pub prior: vect3<T>,
+    pub sqrt_info: matrix3<T>,
+}
+
+/// The position prior of a rig camera in one frame, whose centre goes
+/// through its rig pose: `-R^T (t + Rc^T tc)`, with `(R, t)` the
+/// frame's world-to-rig pose and `(Rc, tc)` the camera's rig-to-camera
+/// pose.
+#[arael::model]
+#[arael(constraint(hb, name = "prior",
+    loss = |s| colmap_loss(root.prior_loss, s, root.prior_k2), {
+    let t = vect3sym::from_components(pose.tx, pose.ty, pose.tz);
+    let t_rig = t + cam.rot.rotation_matrix().transpose() * cam.t;
+    let r = rigpositionprior.sqrt_info
+        * (rigpositionprior.prior + pose.rot.rotation_matrix().transpose() * t_rig);
+    [r.x, r.y, r.z]
+}))]
+#[derive(Default)]
+pub struct RigPositionPrior<T: Float> {
+    #[arael(ref = root.poses)]
+    pub pose: Ref<Pose<T>>,
+    #[arael(ref = root.rig_cams)]
+    pub cam: Ref<RigCam<T>>,
+    pub prior: vect3<T>,
+    pub sqrt_info: matrix3<T>,
+    pub hb: VarCrossBlock<Pose<T>, RigCam<T>, T>,
+}
+
+// ---------------------------------------------------------------------------
 // Roots
 // ---------------------------------------------------------------------------
 
@@ -594,10 +648,15 @@ pub struct BaProblem {
     pub rig_cams: refs::Vec<RigCam<f64>>,
     pub fixed_images: refs::Vec<FixedImage<f64>>,
     pub rig_fixed_images: refs::Vec<RigFixedImage<f64>>,
+    pub rig_priors: refs::Vec<RigPositionPrior<f64>>,
     /// COLMAP's loss function type for this solve.
     pub loss: u32,
     /// Squared loss scale, Ceres' `b = a * a`.
     pub k2: f64,
     /// Multiplier on the loss, COLMAP's loss function weight.
     pub w: f64,
+    /// The position priors' loss function type, as `loss`.
+    pub prior_loss: u32,
+    /// Squared scale of the position priors' loss.
+    pub prior_k2: f64,
 }

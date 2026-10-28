@@ -18,11 +18,13 @@ type Image = colmap_arael::Image<f64>;
 type Observation = colmap_arael::Observation<f64>;
 type Point = colmap_arael::Point<f64>;
 type Pose = colmap_arael::Pose<f64>;
+type PositionPrior = colmap_arael::PositionPrior<f64>;
 type RigCam = colmap_arael::RigCam<f64>;
 type RigFixedImage = colmap_arael::RigFixedImage<f64>;
 type RigFixedObservation = colmap_arael::RigFixedObservation<f64>;
 type RigImage = colmap_arael::RigImage<f64>;
 type RigObservation = colmap_arael::RigObservation<f64>;
+type RigPositionPrior = colmap_arael::RigPositionPrior<f64>;
 
 /// The opaque handle the C ABI hands out: the model, the error /
 /// diagnostic text buffer `last_error` points into, and the
@@ -5987,6 +5989,239 @@ pub unsafe extern "C" fn ba_problem_rig_fixed_images_get_refs_n(
     true
 }
 #[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_len(p: *const BaProblemHandle) -> u32 {
+    (*p).model.rig_priors.len() as u32
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_reserve(p: *mut BaProblemHandle, additional: u32) {
+    (*p).model.rig_priors.reserve(additional as usize);
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_push(p: *mut BaProblemHandle) -> *mut RigPositionPrior {
+    let m = &mut (*p).model.rig_priors;
+    let r = m.push(Default::default());
+    &mut m[r] as *mut RigPositionPrior
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_at(p: *mut BaProblemHandle, i: u32) -> *mut RigPositionPrior {
+    let m = &mut (*p).model.rig_priors;
+    &mut m[i as usize] as *mut RigPositionPrior
+}
+/// Drops the last element; false when already empty.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_pop(p: *mut BaProblemHandle) -> bool {
+    (*p).model.rig_priors.pop().is_some()
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_clear(p: *mut BaProblemHandle) {
+    (*p).model.rig_priors.clear();
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_truncate(p: *mut BaProblemHandle, len: u32) {
+    (*p).model.rig_priors.truncate(len as usize);
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_ref_at(p: *const BaProblemHandle, i: u32) -> u32 {
+    (*p).model.rig_priors.ref_at(i as usize).to_raw()
+}
+/// Ref of the first/last element, or u32::MAX when empty.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_first_ref(p: *const BaProblemHandle) -> u32 {
+    match (*p).model.rig_priors.first_ref() {
+        Some(r) => r.to_raw(),
+        None => u32::MAX,
+    }
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_last_ref(p: *const BaProblemHandle) -> u32 {
+    match (*p).model.rig_priors.last_ref() {
+        Some(r) => r.to_raw(),
+        None => u32::MAX,
+    }
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_get(p: *mut BaProblemHandle, r: u32) -> *mut RigPositionPrior {
+    let m = &mut (*p).model.rig_priors;
+    &mut m[arael::refs::Ref::from_raw(r)] as *mut RigPositionPrior
+}
+/// True while `r` addresses a live element of this collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_contains(p: *const BaProblemHandle, r: u32) -> bool {
+    (*p).model.rig_priors.contains_ref(arael::refs::Ref::from_raw(r))
+}
+/// Like get, but null for a stale or foreign ref instead of a panic.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_try_get(p: *mut BaProblemHandle, r: u32) -> *mut RigPositionPrior {
+    let m = &mut (*p).model.rig_priors;
+    match m.get_mut(arael::refs::Ref::from_raw(r)) {
+        Some(e) => e as *mut RigPositionPrior,
+        None => std::ptr::null_mut(),
+    }
+}
+/// Appends `n` elements built from `n` slot records of 15 u64 each (mask
+/// word(s), then one slot per leaf), or `n` defaults when `slots` is null.
+/// Returns the first new element's key: its packed ref on a refs::Vec,
+/// its index on a std::vec::Vec.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_push_n(p: *mut BaProblemHandle, slots: *const u64, n: u32) -> u32 {
+    let m = &mut (*p).model.rig_priors;
+    let first = m.len();
+    m.reserve(n as usize);
+    for i in 0..n as usize {
+        let mut e: RigPositionPrior = Default::default();
+        if !slots.is_null() {
+            assign_slots_rig_position_prior(&mut e, slots.add(i * 15));
+        }
+        m.push(e);
+    }
+    if n == 0 { u32::MAX } else { m.ref_at(first).to_raw() }
+}
+/// Sets `pose` on elements `start..start + n` from values `stride` bytes
+/// apart (0 broadcasts one value); false when the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_set_pose_n(
+    p: *mut BaProblemHandle, start: u32, v: *const u32, n: u32, stride: i64) -> bool {
+    let m = &mut (*p).model.rig_priors;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        let src = (v as *const u8).offset((i as i64 * stride) as isize) as *const u32;
+        m[start + i].pose = arael::refs::Ref::from_raw(std::ptr::read_unaligned(src));
+    }
+    true
+}
+/// Reads `pose` of elements `start..start + n` into slots `stride` bytes
+/// apart; false when the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_get_pose_n(
+    p: *const BaProblemHandle, start: u32, out: *mut u32, n: u32, stride: i64) -> bool {
+    let m = &(*p).model.rig_priors;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        let dst = (out as *mut u8).offset((i as i64 * stride) as isize) as *mut u32;
+        std::ptr::write_unaligned(dst, m[start + i].pose.to_raw());
+    }
+    true
+}
+/// Sets `cam` on elements `start..start + n` from values `stride` bytes
+/// apart (0 broadcasts one value); false when the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_set_cam_n(
+    p: *mut BaProblemHandle, start: u32, v: *const u32, n: u32, stride: i64) -> bool {
+    let m = &mut (*p).model.rig_priors;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        let src = (v as *const u8).offset((i as i64 * stride) as isize) as *const u32;
+        m[start + i].cam = arael::refs::Ref::from_raw(std::ptr::read_unaligned(src));
+    }
+    true
+}
+/// Reads `cam` of elements `start..start + n` into slots `stride` bytes
+/// apart; false when the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_get_cam_n(
+    p: *const BaProblemHandle, start: u32, out: *mut u32, n: u32, stride: i64) -> bool {
+    let m = &(*p).model.rig_priors;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        let dst = (out as *mut u8).offset((i as i64 * stride) as isize) as *mut u32;
+        std::ptr::write_unaligned(dst, m[start + i].cam.to_raw());
+    }
+    true
+}
+/// Sets `prior` on elements `start..start + n` from values `stride` bytes
+/// apart (0 broadcasts one value); false when the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_set_prior_n(
+    p: *mut BaProblemHandle, start: u32, v: *const f64, n: u32, stride: i64) -> bool {
+    let m = &mut (*p).model.rig_priors;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        let src = (v as *const u8).offset((i as i64 * stride) as isize) as *const f64;
+        m[start + i].prior = std::mem::transmute::<[f64; 3], CVec3F64>(std::ptr::read_unaligned(src as *const [f64; 3])).into();
+    }
+    true
+}
+/// Reads `prior` of elements `start..start + n` into slots `stride` bytes
+/// apart; false when the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_get_prior_n(
+    p: *const BaProblemHandle, start: u32, out: *mut f64, n: u32, stride: i64) -> bool {
+    let m = &(*p).model.rig_priors;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        let dst = (out as *mut u8).offset((i as i64 * stride) as isize) as *mut f64;
+        let mv: CVec3F64 = m[start + i].prior.into();
+        std::ptr::write_unaligned(dst as *mut [f64; 3], std::mem::transmute::<CVec3F64, [f64; 3]>(mv));
+    }
+    true
+}
+/// Sets `sqrt_info` on elements `start..start + n` from values `stride` bytes
+/// apart (0 broadcasts one value); false when the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_set_sqrt_info_n(
+    p: *mut BaProblemHandle, start: u32, v: *const f64, n: u32, stride: i64) -> bool {
+    let m = &mut (*p).model.rig_priors;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        let src = (v as *const u8).offset((i as i64 * stride) as isize) as *const f64;
+        m[start + i].sqrt_info = std::mem::transmute::<[f64; 9], CMat3F64>(std::ptr::read_unaligned(src as *const [f64; 9])).into();
+    }
+    true
+}
+/// Reads `sqrt_info` of elements `start..start + n` into slots `stride` bytes
+/// apart; false when the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_get_sqrt_info_n(
+    p: *const BaProblemHandle, start: u32, out: *mut f64, n: u32, stride: i64) -> bool {
+    let m = &(*p).model.rig_priors;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        let dst = (out as *mut u8).offset((i as i64 * stride) as isize) as *mut f64;
+        let mv: CMat3F64 = m[start + i].sqrt_info.into();
+        std::ptr::write_unaligned(dst as *mut [f64; 9], std::mem::transmute::<CMat3F64, [f64; 9]>(mv));
+    }
+    true
+}
+/// Packed refs of elements `start..start + n`, in index order; false when
+/// the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_priors_get_refs_n(
+    p: *const BaProblemHandle, start: u32, out: *mut u32, n: u32) -> bool {
+    let m = &(*p).model.rig_priors;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        *out.add(i) = m.ref_at(start + i).to_raw();
+    }
+    true
+}
+#[no_mangle]
 pub unsafe extern "C" fn ba_problem_loss(p: *const BaProblemHandle) -> u32 {
     (*p).model.loss
 }
@@ -6009,6 +6244,22 @@ pub unsafe extern "C" fn ba_problem_w(p: *const BaProblemHandle) -> f64 {
 #[no_mangle]
 pub unsafe extern "C" fn ba_problem_set_w(p: *mut BaProblemHandle, v: f64) {
     (*p).model.w = v;
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_prior_loss(p: *const BaProblemHandle) -> u32 {
+    (*p).model.prior_loss
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_set_prior_loss(p: *mut BaProblemHandle, v: u32) {
+    (*p).model.prior_loss = v;
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_prior_k2(p: *const BaProblemHandle) -> f64 {
+    (*p).model.prior_k2
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_set_prior_k2(p: *mut BaProblemHandle, v: f64) {
+    (*p).model.prior_k2 = v;
 }
 #[no_mangle]
 pub unsafe extern "C" fn ba_problem_cam_model(p: *const Cam) -> u32 {
@@ -6805,6 +7056,55 @@ pub unsafe extern "C" fn ba_problem_pose_rig_images_get_cam_n(
     true
 }
 #[no_mangle]
+pub unsafe extern "C" fn ba_problem_pose_has_prior(p: *const Pose) -> bool {
+    (*p).prior.is_some()
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_pose_make_prior(p: *mut Pose) -> *mut PositionPrior {
+    let a = &mut (*p).prior;
+    *a = Some(Default::default());
+    a.as_mut().unwrap() as *mut PositionPrior
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_pose_clear_prior(p: *mut Pose) {
+    (*p).prior = None;
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_pose_prior(p: *mut Pose) -> *mut PositionPrior {
+    match &mut (*p).prior {
+        Some(e) => e as *mut PositionPrior,
+        None => std::ptr::null_mut(),
+    }
+}
+/// make_prior from one slot record (mask word(s), then one slot per leaf;
+/// null for the plain default).
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_pose_make_prior_slots(p: *mut Pose, slots: *const u64) -> *mut PositionPrior {
+    let mut e: PositionPrior = Default::default();
+    if !slots.is_null() {
+        assign_slots_position_prior(&mut e, slots);
+    }
+    let a = &mut (*p).prior;
+    *a = Some(e);
+    a.as_mut().unwrap() as *mut PositionPrior
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_position_prior_prior(p: *const PositionPrior) -> CVec3F64 {
+    (*p).prior.into()
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_position_prior_set_prior(p: *mut PositionPrior, v: CVec3F64) {
+    (*p).prior = v.into();
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_position_prior_sqrt_info(p: *const PositionPrior) -> CMat3F64 {
+    (*p).sqrt_info.into()
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_position_prior_set_sqrt_info(p: *mut PositionPrior, v: CMat3F64) {
+    (*p).sqrt_info = v.into();
+}
+#[no_mangle]
 pub unsafe extern "C" fn ba_problem_rig_cam_model(p: *const RigCam) -> u32 {
     (*p).model
 }
@@ -7386,6 +7686,38 @@ pub unsafe extern "C" fn ba_problem_rig_observation_px(p: *const RigObservation)
 pub unsafe extern "C" fn ba_problem_rig_observation_set_px(p: *mut RigObservation, v: CVec2F64) {
     (*p).px = v.into();
 }
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_position_prior_pose(p: *const RigPositionPrior) -> u32 {
+    (*p).pose.to_raw()
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_position_prior_set_pose(p: *mut RigPositionPrior, v: u32) {
+    (*p).pose = arael::refs::Ref::from_raw(v);
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_position_prior_cam(p: *const RigPositionPrior) -> u32 {
+    (*p).cam.to_raw()
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_position_prior_set_cam(p: *mut RigPositionPrior, v: u32) {
+    (*p).cam = arael::refs::Ref::from_raw(v);
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_position_prior_prior(p: *const RigPositionPrior) -> CVec3F64 {
+    (*p).prior.into()
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_position_prior_set_prior(p: *mut RigPositionPrior, v: CVec3F64) {
+    (*p).prior = v.into();
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_position_prior_sqrt_info(p: *const RigPositionPrior) -> CMat3F64 {
+    (*p).sqrt_info.into()
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_position_prior_set_sqrt_info(p: *mut RigPositionPrior, v: CMat3F64) {
+    (*p).sqrt_info = v.into();
+}
 
 /// Assigns a slot record's masked leaves onto a `Cam`: 1 mask
 /// word(s), then 33 slot(s), one per leaf in field order.
@@ -7579,6 +7911,18 @@ unsafe fn assign_slots_pose(e: &mut Pose, s: *const u64) {
     }
 }
 
+/// Assigns a slot record's masked leaves onto a `PositionPrior`: 1 mask
+/// word(s), then 12 slot(s), one per leaf in field order.
+#[allow(dead_code)]
+unsafe fn assign_slots_position_prior(e: &mut PositionPrior, s: *const u64) {
+    if *s.add(0) & (1u64 << 0) != 0 {
+        e.prior = std::mem::transmute::<[f64; 3], CVec3F64>([f64::from_bits(*s.add(1)), f64::from_bits(*s.add(2)), f64::from_bits(*s.add(3))]).into();
+    }
+    if *s.add(0) & (1u64 << 1) != 0 {
+        e.sqrt_info = std::mem::transmute::<[f64; 9], CMat3F64>([f64::from_bits(*s.add(4)), f64::from_bits(*s.add(5)), f64::from_bits(*s.add(6)), f64::from_bits(*s.add(7)), f64::from_bits(*s.add(8)), f64::from_bits(*s.add(9)), f64::from_bits(*s.add(10)), f64::from_bits(*s.add(11)), f64::from_bits(*s.add(12))]).into();
+    }
+}
+
 /// Assigns a slot record's masked leaves onto a `RigCam`: 1 mask
 /// word(s), then 42 slot(s), one per leaf in field order.
 #[allow(dead_code)]
@@ -7738,5 +8082,23 @@ unsafe fn assign_slots_rig_observation(e: &mut RigObservation, s: *const u64) {
     }
     if *s.add(0) & (1u64 << 1) != 0 {
         e.px = std::mem::transmute::<[f64; 2], CVec2F64>([f64::from_bits(*s.add(2)), f64::from_bits(*s.add(3))]).into();
+    }
+}
+
+/// Assigns a slot record's masked leaves onto a `RigPositionPrior`: 1 mask
+/// word(s), then 14 slot(s), one per leaf in field order.
+#[allow(dead_code)]
+unsafe fn assign_slots_rig_position_prior(e: &mut RigPositionPrior, s: *const u64) {
+    if *s.add(0) & (1u64 << 0) != 0 {
+        e.pose = arael::refs::Ref::from_raw(*s.add(1) as u32);
+    }
+    if *s.add(0) & (1u64 << 1) != 0 {
+        e.cam = arael::refs::Ref::from_raw(*s.add(2) as u32);
+    }
+    if *s.add(0) & (1u64 << 2) != 0 {
+        e.prior = std::mem::transmute::<[f64; 3], CVec3F64>([f64::from_bits(*s.add(3)), f64::from_bits(*s.add(4)), f64::from_bits(*s.add(5))]).into();
+    }
+    if *s.add(0) & (1u64 << 3) != 0 {
+        e.sqrt_info = std::mem::transmute::<[f64; 9], CMat3F64>([f64::from_bits(*s.add(6)), f64::from_bits(*s.add(7)), f64::from_bits(*s.add(8)), f64::from_bits(*s.add(9)), f64::from_bits(*s.add(10)), f64::from_bits(*s.add(11)), f64::from_bits(*s.add(12)), f64::from_bits(*s.add(13)), f64::from_bits(*s.add(14))]).into();
     }
 }

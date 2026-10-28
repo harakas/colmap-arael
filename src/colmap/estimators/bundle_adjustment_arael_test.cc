@@ -5,6 +5,7 @@
 #include "colmap/estimators/bundle_adjustment_ceres.h"
 #include "colmap/geometry/rigid3_matchers.h"
 #include "colmap/math/random.h"
+#include "colmap/scene/database.h"
 #include "colmap/scene/reconstruction_matchers.h"
 #include "colmap/scene/synthetic.h"
 #include "colmap/sensor/models.h"
@@ -1656,6 +1657,192 @@ TEST(AraelBundleAdjuster, ResidualsMatchCeres) {
     EXPECT_NEAR(GetAraelSummary(summary.get()).initial_cost,
                 ceres_cost,
                 1e-9 * ceres_cost);
+  }
+}
+
+// A pose-prior problem: a synthetic scene whose images carry position
+// priors, changed as the fields say before both backends build their
+// pose-prior adjusters from it.
+struct PriorCase {
+  std::string name;
+  int num_cameras_per_rig = 1;
+  // Noise on the prior positions, their covariance set to match; 0 keeps
+  // them exact and without a covariance (the fallback standard deviation).
+  double prior_position_stddev = 0.1;
+  // Every n-th prior moved by 10 (0: none), under the robust prior loss.
+  int outlier_every = 0;
+  // Keep every n-th prior only.
+  int keep_every = 1;
+  // Hold every n-th frame's rig_from_world constant (0: none).
+  int constant_frame_every = 0;
+};
+
+struct PriorProblem {
+  Reconstruction reconstruction;
+  BundleAdjustmentConfig config;
+  std::vector<PosePrior> pose_priors;
+  BundleAdjustmentOptions options;
+  PosePriorBundleAdjustmentOptions prior_options;
+};
+
+PriorProblem MakePriorProblem(const PriorCase& c) {
+  SetPRNGSeed();
+  PriorProblem problem;
+  SyntheticDatasetOptions synthetic_dataset_options;
+  synthetic_dataset_options.num_rigs = 1;
+  synthetic_dataset_options.num_cameras_per_rig = c.num_cameras_per_rig;
+  synthetic_dataset_options.num_frames_per_rig = 6;
+  synthetic_dataset_options.num_points3D = 100;
+  synthetic_dataset_options.prior_position = true;
+  // One database per case: the test's directory is shared by its cases.
+  std::string database_name = c.name + ".db";
+  std::replace(database_name.begin(), database_name.end(), '/', '_');
+  auto database = Database::Open(CreateTestDir() / database_name);
+  SynthesizeDataset(
+      synthetic_dataset_options, &problem.reconstruction, database.get());
+  SyntheticNoiseOptions synthetic_noise_options;
+  synthetic_noise_options.point2D_stddev = 0.5;
+  synthetic_noise_options.point3D_stddev = 0.1;
+  synthetic_noise_options.rig_from_world_rotation_stddev = 0.5;
+  synthetic_noise_options.rig_from_world_translation_stddev = 0.1;
+  synthetic_noise_options.prior_position_stddev = c.prior_position_stddev;
+  SynthesizeNoise(
+      synthetic_noise_options, &problem.reconstruction, database.get());
+
+  std::vector<PosePrior> pose_priors = database->ReadAllPosePriors();
+  for (size_t i = 0; i < pose_priors.size(); ++i) {
+    if (i % c.keep_every != 0) {
+      continue;
+    }
+    PosePrior pose_prior = pose_priors[i];
+    if (c.outlier_every > 0 && i % c.outlier_every == 0) {
+      pose_prior.position += Eigen::Vector3d(10, 0, 0);
+    }
+    problem.pose_priors.push_back(pose_prior);
+  }
+
+  for (const image_t image_id : problem.reconstruction.RegImageIds()) {
+    problem.config.AddImage(image_id);
+  }
+  if (c.constant_frame_every > 0) {
+    for (const frame_t frame_id : problem.reconstruction.RegFrameIds()) {
+      if (frame_id % c.constant_frame_every == 0) {
+        problem.config.SetConstantRigFromWorldPose(frame_id);
+      }
+    }
+  }
+
+  problem.options.print_summary = false;
+  problem.options.ceres->solver_options.max_num_iterations = 500;
+  problem.options.ceres->solver_options.function_tolerance = 1e-12;
+  problem.options.ceres->solver_options.gradient_tolerance = 1e-12;
+  problem.options.ceres->solver_options.parameter_tolerance = 1e-12;
+  problem.options.arael->max_num_iterations = 500;
+  problem.options.arael->rel_precision = 1e-12;
+  problem.prior_options.alignment_ransac_options.random_seed = 0;
+  if (c.outlier_every > 0) {
+    problem.prior_options.ceres->prior_position_loss_function_type =
+        CeresLossFunctionType::CAUCHY;
+  }
+  return problem;
+}
+
+std::vector<PriorCase> PriorCases() {
+  std::vector<PriorCase> cases;
+  cases.push_back({"covariance"});
+  cases.push_back({"fallback_stddev", 1, 0.0});
+  cases.push_back({"rig", 3});
+  cases.push_back({"outliers/robust_loss", 1, 0.1, 4});
+  cases.push_back({"some_images", 1, 0.1, 0, 2});
+  // Constant frame poses: the rig cameras' priors move only their rig
+  // poses.
+  cases.push_back({"rig/constant_frames", 3, 0.1, 0, 1, 2});
+  // Fewer than three priors: no alignment, the two-cameras gauge.
+  cases.push_back({"two_priors", 1, 0.1, 0, 4});
+  return cases;
+}
+
+// arael's pose-prior adjuster starts from the Ceres one's cost: the same
+// alignment, normalization, prior residuals and weights.
+TEST(AraelBundleAdjuster, PosePriorResidualsMatchCeres) {
+  for (const PriorCase& c : PriorCases()) {
+    SCOPED_TRACE(c.name);
+    PriorProblem problem = MakePriorProblem(c);
+
+    Reconstruction ceres_reconstruction = problem.reconstruction;
+    const auto ceres_adjuster =
+        CreatePosePriorCeresBundleAdjuster(problem.options,
+                                           problem.prior_options,
+                                           problem.config,
+                                           problem.pose_priors,
+                                           ceres_reconstruction);
+    double ceres_cost = 0.0;
+    ceres_adjuster->Problem()->Evaluate(ceres::Problem::EvaluateOptions(),
+                                        &ceres_cost,
+                                        nullptr,
+                                        nullptr,
+                                        nullptr);
+
+    BundleAdjustmentOptions options = problem.options;
+    options.backend = BundleAdjustmentBackend::ARAEL;
+    options.arael->max_num_iterations = 1;
+    Reconstruction arael_reconstruction = problem.reconstruction;
+    const auto summary =
+        CreatePosePriorAraelBundleAdjuster(options,
+                                           problem.prior_options,
+                                           problem.config,
+                                           problem.pose_priors,
+                                           arael_reconstruction)
+            ->Solve();
+    EXPECT_NEAR(GetAraelSummary(summary.get()).initial_cost,
+                ceres_cost,
+                1e-9 * ceres_cost);
+    EXPECT_EQ(GetAraelSummary(summary.get()).kind,
+              "pose prior bundle adjustment");
+  }
+}
+
+// Both backends' pose-prior adjusters reach the same optimum.
+TEST(AraelBundleAdjuster, PosePriorMatchesCeresOptimum) {
+  for (const PriorCase& c : PriorCases()) {
+    SCOPED_TRACE(c.name);
+    PriorProblem problem = MakePriorProblem(c);
+
+    Reconstruction ceres_reconstruction = problem.reconstruction;
+    const auto ceres_summary =
+        CreatePosePriorCeresBundleAdjuster(problem.options,
+                                           problem.prior_options,
+                                           problem.config,
+                                           problem.pose_priors,
+                                           ceres_reconstruction)
+            ->Solve();
+    ASSERT_EQ(ceres_summary->termination_type,
+              BundleAdjustmentTerminationType::CONVERGENCE);
+    const double ceres_final =
+        dynamic_cast<const CeresBundleAdjustmentSummary&>(*ceres_summary)
+            .ceres_summary.final_cost;
+
+    BundleAdjustmentOptions options = problem.options;
+    options.backend = BundleAdjustmentBackend::ARAEL;
+    Reconstruction arael_reconstruction = problem.reconstruction;
+    const auto arael_summary =
+        CreatePosePriorAraelBundleAdjuster(options,
+                                           problem.prior_options,
+                                           problem.config,
+                                           problem.pose_priors,
+                                           arael_reconstruction)
+            ->Solve();
+    ASSERT_EQ(arael_summary->termination_type,
+              BundleAdjustmentTerminationType::CONVERGENCE);
+    EXPECT_NEAR(GetAraelSummary(arael_summary.get()).final_cost,
+                ceres_final,
+                1e-5 * ceres_final);
+    EXPECT_THAT(ceres_reconstruction,
+                ReconstructionNear(arael_reconstruction,
+                                   /*max_rotation_error_deg=*/1e-2,
+                                   /*max_proj_center_error=*/1e-2,
+                                   /*max_scale_error=*/std::nullopt,
+                                   /*num_obs_tolerance=*/0.0));
   }
 }
 
