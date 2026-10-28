@@ -959,6 +959,75 @@ TEST(AraelBundleAdjuster, Drivers) {
   }
 }
 
+Reconstruction CancellationReconstruction(BundleAdjustmentConfig* config) {
+  Reconstruction reconstruction;
+  SyntheticDatasetOptions synthetic_dataset_options;
+  synthetic_dataset_options.num_rigs = 1;
+  synthetic_dataset_options.num_cameras_per_rig = 1;
+  synthetic_dataset_options.num_frames_per_rig = 3;
+  synthetic_dataset_options.num_points3D = 20;
+  SynthesizeDataset(synthetic_dataset_options, &reconstruction);
+  SyntheticNoiseOptions synthetic_noise_options;
+  synthetic_noise_options.point2D_stddev = 1.0;
+  SynthesizeNoise(synthetic_noise_options, &reconstruction);
+  for (const image_t image_id : reconstruction.RegImageIds()) {
+    config->AddImage(image_id);
+  }
+  config->FixGauge(BundleAdjustmentGauge::TWO_CAMS_FROM_WORLD);
+  return reconstruction;
+}
+
+// A stop requested through check_if_stopped ends the solve at the first
+// damped attempt with a usable solution, USER_SUCCESS as in the Ceres
+// backend.
+TEST(AraelBundleAdjuster, Cancellation) {
+  BundleAdjustmentConfig config;
+  Reconstruction reconstruction = CancellationReconstruction(&config);
+
+  int num_checks = 0;
+  BundleAdjustmentOptions options;
+  options.check_if_stopped = [&num_checks]() {
+    ++num_checks;
+    return true;
+  };
+  const auto summary = SolveArael(options, config, reconstruction);
+
+  EXPECT_EQ(num_checks, 1);
+  EXPECT_EQ(summary->termination_type,
+            BundleAdjustmentTerminationType::USER_SUCCESS);
+  EXPECT_TRUE(summary->IsSolutionUsable());
+  EXPECT_EQ(GetAraelSummary(summary.get()).num_iterations, 1);
+}
+
+// A check_if_stopped that never stops is asked once per damped attempt
+// and leaves the solve as it is without one.
+TEST(AraelBundleAdjuster, CancellationNotRequested) {
+  BundleAdjustmentConfig config;
+  Reconstruction reconstruction = CancellationReconstruction(&config);
+  Reconstruction unchecked_reconstruction = reconstruction;
+  const auto unchecked_summary =
+      SolveArael(BundleAdjustmentOptions(), config, unchecked_reconstruction);
+
+  int num_checks = 0;
+  BundleAdjustmentOptions options;
+  options.check_if_stopped = [&num_checks]() {
+    ++num_checks;
+    return false;
+  };
+  const auto summary = SolveArael(options, config, reconstruction);
+
+  EXPECT_EQ(summary->termination_type,
+            BundleAdjustmentTerminationType::CONVERGENCE);
+  const AraelBundleAdjustmentSummary& arael_summary =
+      GetAraelSummary(summary.get());
+  EXPECT_EQ(num_checks, arael_summary.num_iterations);
+  EXPECT_EQ(arael_summary.num_iterations,
+            GetAraelSummary(unchecked_summary.get()).num_iterations);
+  EXPECT_NEAR(arael_summary.final_cost,
+              GetAraelSummary(unchecked_summary.get()).final_cost,
+              1e-10 * arael_summary.final_cost);
+}
+
 TEST(AraelBundleAdjuster, BriefReport) {
   Reconstruction reconstruction;
   SyntheticDatasetOptions synthetic_dataset_options;

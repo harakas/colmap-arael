@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <iomanip>
 #include <set>
 #include <sstream>
@@ -264,6 +265,12 @@ int NumRigCamParams(Cam cam) {
          3 * cam.t_optimize();
 }
 
+// The solver's observer for BundleAdjustmentOptions::check_if_stopped,
+// which `user` points at: false stops the solve.
+bool ContinueUnlessStopped(void* user, const colmap_arael::LmIter*) noexcept {
+  return !(*static_cast<const std::function<bool()>*>(user))();
+}
+
 Model::LmConfig CreateLmConfig(const AraelBundleAdjustmentOptions& options) {
   using LmConfig = Model::LmConfig;
   LmConfig config;
@@ -486,6 +493,12 @@ class AraelBundleAdjuster : public BundleAdjuster {
         !options_.report_path.empty()) {
       lm_config.gather_timing = true;
     }
+    // Asked after every damped attempt, as Ceres asks after every
+    // iteration.
+    if (options_.check_if_stopped) {
+      lm_config.observer = &ContinueUnlessStopped;
+      lm_config.observer_user = &options_.check_if_stopped;
+    }
 
     M::SparseOptions sparse_options = CreateSparseOptions(arael_options);
     if (sparse_options.schur == arael::SchurPolicy::Force &&
@@ -562,10 +575,15 @@ class AraelBundleAdjuster : public BundleAdjuster {
               << "), advance " << t.advance;
     }
     FillSummary(lm_result, summary.get());
-    summary->termination_type =
-        arael::is_success(lm_result.status)
-            ? BundleAdjustmentTerminationType::CONVERGENCE
-            : BundleAdjustmentTerminationType::NO_CONVERGENCE;
+    // A solve stopped through check_if_stopped ends as a Ceres one does.
+    if (lm_result.status == arael::LmStatus::ObserverTerminated) {
+      summary->termination_type = BundleAdjustmentTerminationType::USER_SUCCESS;
+    } else {
+      summary->termination_type =
+          arael::is_success(lm_result.status)
+              ? BundleAdjustmentTerminationType::CONVERGENCE
+              : BundleAdjustmentTerminationType::NO_CONVERGENCE;
+    }
     summary->termination_reason = arael::as_str(lm_result.status);
 
     WriteBack();
