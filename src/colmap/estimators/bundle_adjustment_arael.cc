@@ -53,8 +53,34 @@ const std::vector<CameraModelId>& SupportedModels() {
       OpenCVFisheyeCameraModel::model_id,
       ThinPrismFisheyeCameraModel::model_id,
       RadTanThinPrismFisheyeModel::model_id,
+      SimpleRadialFisheyeCameraModel::model_id,
+      RadialFisheyeCameraModel::model_id,
+      FOVCameraModel::model_id,
+      SimpleFisheyeCameraModel::model_id,
+      FisheyeCameraModel::model_id,
+      SkewedPinholeCameraModel::model_id,
+      SimpleDivisionCameraModel::model_id,
+      DivisionCameraModel::model_id,
+      EUCMCameraModel::model_id,
+      EquirectangularCameraModel::model_id,
   };
   return models;
+}
+
+// The camera entity's `check`, the test of whether its model projects a
+// point, by the `model` index.
+uint32_t ProjectionCheck(const uint32_t model) {
+  switch (SupportedModels()[model]) {
+    case SimpleDivisionCameraModel::model_id:
+    case DivisionCameraModel::model_id:
+      return 1;
+    case EUCMCameraModel::model_id:
+      return 2;
+    case EquirectangularCameraModel::model_id:
+      return 3;
+    default:
+      return 0;
+  }
 }
 
 std::string SupportedCameraModels() {
@@ -107,13 +133,13 @@ struct Extras {
 #define COLMAP_ARAEL_GET(e) &Cam::e,
 #define COLMAP_ARAEL_SET_OPTIMIZE(e) &Cam::set_##e##_optimize,
 #define COLMAP_ARAEL_OPTIMIZE(e) &Cam::e##_optimize,
-  static constexpr void (Cam::*kSet[kNum])(double) = {
+  static constexpr void (Cam::* kSet[kNum])(double) = {
       COLMAP_ARAEL_EXTRAS(COLMAP_ARAEL_SET)};
-  static constexpr double (Cam::*kGet[kNum])() const = {
+  static constexpr double (Cam::* kGet[kNum])() const = {
       COLMAP_ARAEL_EXTRAS(COLMAP_ARAEL_GET)};
-  static constexpr void (Cam::*kSetOptimize[kNum])(bool) = {
+  static constexpr void (Cam::* kSetOptimize[kNum])(bool) = {
       COLMAP_ARAEL_EXTRAS(COLMAP_ARAEL_SET_OPTIMIZE)};
-  static constexpr bool (Cam::*kOptimize[kNum])() const = {
+  static constexpr bool (Cam::* kOptimize[kNum])() const = {
       COLMAP_ARAEL_EXTRAS(COLMAP_ARAEL_OPTIMIZE)};
 #undef COLMAP_ARAEL_EXTRAS
 #undef COLMAP_ARAEL_SET
@@ -124,17 +150,19 @@ struct Extras {
 
 // Which intrinsics of a camera handle are optimized, by COLMAP's
 // refinement groups (focal length, principal point, extra parameters).
-// `fy` of a model with one focal length and the extra parameters past
-// the model's own stay constant.
+// `fy` of a model with one focal length, the extra parameters past the
+// model's own and the metadata parameters stay constant, as do the
+// focal lengths and principal point of a model without them.
 template <typename Cam>
 void SetIntrinsicsOptimize(Cam cam,
                            const Camera& camera,
                            const bool focal,
                            const bool pp,
                            const bool extra) {
-  cam.set_fx_optimize(focal);
-  cam.set_fy_optimize(focal && camera.FocalLengthIdxs().size() == 2);
-  cam.set_pp_optimize(pp);
+  const size_t num_focal = camera.FocalLengthIdxs().size();
+  cam.set_fx_optimize(focal && num_focal > 0);
+  cam.set_fy_optimize(focal && num_focal == 2);
+  cam.set_pp_optimize(pp && !camera.PrincipalPointIdxs().empty());
   const size_t num_extra = camera.ExtraParamsIdxs().size();
   for (size_t i = 0; i < Extras<Cam>::kNum; ++i) {
     (cam.*Extras<Cam>::kSetOptimize[i])(extra && i < num_extra);
@@ -143,37 +171,55 @@ void SetIntrinsicsOptimize(Cam cam,
 
 // A COLMAP camera's model and intrinsics into a camera handle, every
 // intrinsic constant. A model with one focal length has it in `fx`
-// and, unused, in `fy`.
+// and, unused, in `fy`. The extra parameters, then the metadata
+// parameters (EQUIRECTANGULAR's image width and height), fill `e0`
+// onwards. A model without a focal length or principal point leaves
+// them at 1 and 0, unused.
 template <typename Cam>
 void SetIntrinsics(Cam cam, const Camera& camera) {
   const std::vector<double>& p = camera.params;
   const span<const size_t> focal = camera.FocalLengthIdxs();
   const span<const size_t> pp = camera.PrincipalPointIdxs();
   const span<const size_t> extra = camera.ExtraParamsIdxs();
-  THROW_CHECK_LE(extra.size(), Extras<Cam>::kNum);
-  cam.set_model(CheckSupportedCameraModel(camera));
-  cam.set_fx(p[focal[0]]);
-  cam.set_fy(p[focal[focal.size() - 1]]);
-  cam.set_pp({p[pp[0]], p[pp[1]]});
+  const span<const size_t> metadata = camera.MetaDataParamsIdxs();
+  THROW_CHECK_LE(extra.size() + metadata.size(), Extras<Cam>::kNum);
+  const uint32_t model = CheckSupportedCameraModel(camera);
+  cam.set_model(model);
+  cam.set_check(ProjectionCheck(model));
+  cam.set_fx(focal.empty() ? 1.0 : p[focal[0]]);
+  cam.set_fy(focal.empty() ? 1.0 : p[focal[focal.size() - 1]]);
+  if (pp.empty()) {
+    cam.set_pp({0.0, 0.0});
+  } else {
+    cam.set_pp({p[pp[0]], p[pp[1]]});
+  }
   for (size_t i = 0; i < extra.size(); ++i) {
     (cam.*Extras<Cam>::kSet[i])(p[extra[i]]);
+  }
+  for (size_t i = 0; i < metadata.size(); ++i) {
+    (cam.*Extras<Cam>::kSet[extra.size() + i])(p[metadata[i]]);
   }
   SetIntrinsicsOptimize(cam, camera, false, false, false);
 }
 
-// The camera handle's intrinsics into the COLMAP camera's parameters.
+// The camera handle's intrinsics into the COLMAP camera's parameters;
+// the metadata parameters are never optimized and stay as they are.
 template <typename Cam>
 void GetIntrinsics(Cam cam, Camera& camera) {
   std::vector<double>& p = camera.params;
   const span<const size_t> focal = camera.FocalLengthIdxs();
   const span<const size_t> pp = camera.PrincipalPointIdxs();
   const span<const size_t> extra = camera.ExtraParamsIdxs();
-  p[focal[0]] = cam.fx();
+  if (!focal.empty()) {
+    p[focal[0]] = cam.fx();
+  }
   if (focal.size() == 2) {
     p[focal[1]] = cam.fy();
   }
-  p[pp[0]] = cam.pp().x;
-  p[pp[1]] = cam.pp().y;
+  if (!pp.empty()) {
+    p[pp[0]] = cam.pp().x;
+    p[pp[1]] = cam.pp().y;
+  }
   for (size_t i = 0; i < extra.size(); ++i) {
     p[extra[i]] = (cam.*Extras<Cam>::kGet[i])();
   }

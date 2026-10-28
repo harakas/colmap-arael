@@ -61,12 +61,10 @@ TEST(IncrementalPipeline, WithoutNoiseSphericalCameras) {
   SynthesizeDataset(
       synthetic_dataset_options, &gt_reconstruction, database.get());
 
-  // arael has no equirectangular camera model.
-  auto options = std::make_shared<IncrementalPipelineOptions>();
-  options->ba_local_backend = BundleAdjustmentBackend::CERES;
-  options->ba_global_backend = BundleAdjustmentBackend::CERES;
   auto reconstruction_manager = std::make_shared<ReconstructionManager>();
-  IncrementalPipeline mapper(options, database, reconstruction_manager);
+  IncrementalPipeline mapper(std::make_shared<IncrementalPipelineOptions>(),
+                             database,
+                             reconstruction_manager);
   mapper.Run();
 
   ASSERT_EQ(reconstruction_manager->Size(), 1);

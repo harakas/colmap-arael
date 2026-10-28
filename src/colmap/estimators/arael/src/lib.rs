@@ -18,18 +18,21 @@
 //!
 //! The cost is the Ceres backend's 2-row reprojection residual under
 //! the robust loss COLMAP's LossFunctionType names, applied per solve.
-//! As in Ceres, an observation below machine-epsilon depth has its
-//! residual and Jacobian zeroed: a point behind a camera feels no pull
-//! from that view, and the pipeline's filters drop the observation.
+//! As in Ceres, an observation the camera model cannot project has its
+//! residual and Jacobian zeroed: for most models a point below
+//! machine-epsilon depth, so a point behind a camera feels no pull from
+//! that view, and the pipeline's filters drop the observation.
 //!
-//! Camera models: one camera entity for every supported COLMAP model.
-//! A camera holds its model as data (`model`), two focal lengths, the
-//! principal point and twelve extra parameters, the most any supported
-//! model has. The projection matches on the model at runtime; arael
-//! compiles every switch on it into one `match` per observation, so
-//! only the camera's own formula runs. A model with one focal length
-//! reads `fx` for both axes; `fy` and the extra parameters a model does
-//! not have stay out of the solve (their `optimize` flags cleared).
+//! Camera models: one camera entity for every COLMAP model. A camera
+//! holds its model as data (`model`), two focal lengths, the principal
+//! point and twelve extra parameters, the most any model has. The
+//! projection matches on the model at runtime; arael compiles every
+//! switch on it into one `match` per observation, so only the camera's
+//! own formula runs. A model with one focal length reads `fx` for both
+//! axes; `fy` and the extra parameters a model does not have stay out
+//! of the solve (their `optimize` flags cleared). EQUIRECTANGULAR has
+//! no focal length or principal point: its image width and height sit
+//! in `e0` and `e1`, never optimized.
 //!
 //! Poses are stored in COLMAP's direction: a frame pose takes a world
 //! point into rig coordinates, a camera's rig pose takes a rig point
@@ -104,14 +107,6 @@ fn brown(n: vect2sym, k1: E, k2: E, p1: E, p2: E) -> vect2sym {
     let radial = k1 * r2 + k2 * r2 * r2;
     vect2sym::from_components(u * radial + 2.0 * p1 * uv + p2 * (r2 + 2.0 * u2),
                               v * radial + 2.0 * p2 * uv + p1 * (r2 + 2.0 * v2))
-}
-
-/// The pixel residual of the distorted point `d` at focal lengths
-/// `fx, fy` and principal point `pp` against the observed pixel `px`,
-/// zero unless `ok`.
-#[arael::function]
-fn pixel(ok: E, d: vect2sym, fx: E, fy: E, pp: vect2sym, px: vect2sym) -> [E; 2] {
-    [branch(ok, fx * d.x + pp.x - px.x, 0.0), branch(ok, fy * d.y + pp.y - px.y, 0.0)]
 }
 
 // ---------------------------------------------------------------------------
@@ -198,29 +193,151 @@ fn rad_tan_thin_prism_fisheye(n: vect2sym, k0: E, k1: E, k2: E, k3: E, k4: E, k5
                               y + 2.0 * p0 * xy + p1 * (r2 + 2.0 * y2) + r2 * (s2 + r2 * s3))
 }
 
-/// The pixel residual of the camera-frame point `p` through a camera of
-/// the given `model` (see [`Cam::model`]) with focal lengths `fx, fy`,
-/// principal point `pp` and extra parameters `e0` to `e11`, against the
-/// observed pixel `px`.
+/// SIMPLE_RADIAL_FISHEYE: `k`, one radial term in the fisheye angle.
 #[arael::function]
-fn project(p: vect3sym, model: E, fx: E, fy: E, pp: vect2sym,
+fn simple_radial_fisheye(n: vect2sym, k: E) -> vect2sym {
+    let m = fisheye_normal(n);
+    m * (1.0 + k * (m.x * m.x + m.y * m.y))
+}
+
+/// RADIAL_FISHEYE: `k1, k2`, two radial terms in the fisheye angle.
+#[arael::function]
+fn radial_fisheye(n: vect2sym, k1: E, k2: E) -> vect2sym {
+    let m = fisheye_normal(n);
+    let t2 = m.x * m.x + m.y * m.y;
+    m * (1.0 + t2 * (k1 + t2 * k2))
+}
+
+/// FOV: `omega`, the field-of-view model. Near `omega = 0`, and near
+/// the optical axis, a series replaces the atan form, at COLMAP's
+/// thresholds.
+#[arael::function]
+fn fov(n: vect2sym, omega: E) -> vect2sym {
+    let r2 = n.x * n.x + n.y * n.y;
+    let omega2 = omega * omega;
+    let t = tan(omega / 2.0);
+    let factor = branch(omega2 - 1e-4,
+                        branch(r2 - 1e-4,
+                               atan(2.0 * sqrt(r2) * t) / (sqrt(r2) * omega),
+                               -2.0 * t * (4.0 * r2 * t * t - 3.0) / (3.0 * omega)),
+                        omega2 / 12.0 - omega2 * r2 / 3.0 + 1.0);
+    n * factor
+}
+
+/// The division models' discriminant `w^2 - 4 k (u^2 + v^2)` of the
+/// camera-frame point `p`: the models project `p` where it is
+/// non-negative, whatever its depth.
+#[arael::function]
+fn division_disc2(p: vect3sym, k: E) -> E {
+    p.z * p.z - 4.0 * k * (p.x * p.x + p.y * p.y)
+}
+
+/// SIMPLE_DIVISION and DIVISION: `k`, the distorted normalized point of
+/// the camera-frame point `p`, projected from `p` itself; defined where
+/// [`division_disc2`] is non-negative.
+#[arael::function]
+fn division(p: vect3sym, k: E) -> vect2sym {
+    let r = 2.0 / (p.z + sqrt(division_disc2(p, k)));
+    vect2sym::from_components(r * p.x, r * p.y)
+}
+
+/// EUCM's radicand `beta (u^2 + v^2) + w^2` of the camera-frame point
+/// `p`.
+#[arael::function]
+fn eucm_rho2(p: vect3sym, beta: E) -> E {
+    beta * (p.x * p.x + p.y * p.y) + p.z * p.z
+}
+
+/// EUCM's denominator `alpha rho + (1 - alpha) w` of the camera-frame
+/// point `p`; defined where [`eucm_rho2`] is non-negative.
+#[arael::function]
+fn eucm_den(p: vect3sym, alpha: E, beta: E) -> E {
+    alpha * sqrt(eucm_rho2(p, beta)) + (1.0 - alpha) * p.z
+}
+
+/// Whether EUCM projects the camera-frame point `p`: non-negative when
+/// its depth, the radicand and the denominator pass COLMAP's checks.
+#[arael::function]
+fn eucm_ok(p: vect3sym, alpha: E, beta: E) -> E {
+    let den = eucm_den(p, alpha, beta);
+    branch(p.z - epsilon_for(p.z), branch(eucm_rho2(p, beta), den - epsilon_for(den), -1.0), -1.0)
+}
+
+/// EUCM: `alpha, beta`, the distorted normalized point of the
+/// camera-frame point `p` under the extended unified camera model;
+/// defined where [`eucm_ok`] is non-negative.
+#[arael::function]
+fn eucm(p: vect3sym, alpha: E, beta: E) -> vect2sym {
+    let den = eucm_den(p, alpha, beta);
+    vect2sym::from_components(p.x / den, p.y / den)
+}
+
+/// Whether EQUIRECTANGULAR projects the camera-frame point `p`:
+/// non-negative unless `p` is at the camera centre.
+#[arael::function]
+fn equirectangular_ok(p: vect3sym) -> E {
+    safe_sqrt(p.x * p.x + p.z * p.z) + abs(p.y) - epsilon_for(p.y)
+}
+
+/// EQUIRECTANGULAR: the camera-frame point `p` on a panorama `width`
+/// pixels wide, as its longitude less the observed pixel `px`'s, wrapped
+/// into half a turn either way as COLMAP wraps the residual across the
+/// image seam, and its latitude over minus pi. [`project`] scales the
+/// two to pixels.
+#[arael::function]
+fn equirectangular(p: vect3sym, width: E, px: vect2sym) -> vect2sym {
+    let pi = 3.141592653589793;
+    let longitude_obs = (px.x / width - 0.5) * (2.0 * pi);
+    vect2sym::from_components(rad_diff(safe_atan2(p.x, p.z), longitude_obs),
+                              -safe_atan2(-p.y, safe_sqrt(p.x * p.x + p.z * p.z)) / pi)
+}
+
+/// The pixel residual of the camera-frame point `p` through a camera of
+/// the given `model` (see [`Cam::model`]) and projection test `check`
+/// (see [`Cam::check`]) with focal lengths `fx, fy`, principal point
+/// `pp` and extra parameters `e0` to `e11`, against the observed pixel
+/// `px`; zero where the model cannot project `p`.
+#[arael::function]
+fn project(p: vect3sym, model: E, check: E, fx: E, fy: E, pp: vect2sym,
            e0: E, e1: E, e2: E, e3: E, e4: E, e5: E, e6: E, e7: E, e8: E, e9: E, e10: E,
            e11: E, px: vect2sym) -> [E; 2] {
-    let (n, ok) = normalized(p);
-    // The distorted point and the vertical focal length: the models with
-    // one focal length read fx on both axes.
-    let (d, fv) = match model {
-        0 => (n, fy),
-        1 => (n, fx),
-        2 => (simple_radial(n, e0), fx),
-        3 => (radial(n, e0, e1), fx),
-        4 => (opencv(n, e0, e1, e2, e3), fy),
-        5 => (full_opencv(n, e0, e1, e2, e3, e4, e5, e6, e7), fy),
-        6 => (opencv_fisheye(n, e0, e1, e2, e3), fy),
-        7 => (thin_prism_fisheye(n, e0, e1, e2, e3, e4, e5, e6, e7), fy),
-        8 => (rad_tan_thin_prism_fisheye(n, e0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11), fy),
+    let (n, depth) = normalized(p);
+    // Non-negative when the model projects p. Its own match, on `check`
+    // rather than `model`, comes first, so an observation failing it
+    // skips the projection.
+    let ok = match check {
+        0 => depth,
+        1 => division_disc2(p, e0),
+        2 => eucm_ok(p, e0, e1),
+        _ => equirectangular_ok(p),
     };
-    pixel(ok, d, fx, fv, pp, px)
+    // The distorted point `d`, scaled by `(su, sv)` and offset by `c` to
+    // the pixel. The models with one focal length read fx on both axes;
+    // SKEWED_PINHOLE's skew shifts the horizontal offset.
+    let (d, su, sv, c) = match model {
+        0 => (n, fx, fy, pp),
+        1 => (n, fx, fx, pp),
+        2 => (simple_radial(n, e0), fx, fx, pp),
+        3 => (radial(n, e0, e1), fx, fx, pp),
+        4 => (opencv(n, e0, e1, e2, e3), fx, fy, pp),
+        5 => (full_opencv(n, e0, e1, e2, e3, e4, e5, e6, e7), fx, fy, pp),
+        6 => (opencv_fisheye(n, e0, e1, e2, e3), fx, fy, pp),
+        7 => (thin_prism_fisheye(n, e0, e1, e2, e3, e4, e5, e6, e7), fx, fy, pp),
+        8 => (rad_tan_thin_prism_fisheye(n, e0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11),
+              fx, fy, pp),
+        9 => (simple_radial_fisheye(n, e0), fx, fx, pp),
+        10 => (radial_fisheye(n, e0, e1), fx, fx, pp),
+        11 => (fov(n, e0), fx, fy, pp),
+        12 => (fisheye_normal(n), fx, fx, pp),
+        13 => (fisheye_normal(n), fx, fy, pp),
+        14 => (n, fx, fy, vect2sym::from_components(pp.x + e0 * n.y, pp.y)),
+        15 => (division(p, e0), fx, fx, pp),
+        16 => (division(p, e0), fx, fy, pp),
+        17 => (eucm(p, e0, e1), fx, fy, pp),
+        _ => (equirectangular(p, e0, px), e0 / 6.283185307179586, e1,
+              vect2sym::from_components(px.x, 0.5 * e1)),
+    };
+    [branch(ok, su * d.x + c.x - px.x, 0.0), branch(ok, sv * d.y + c.y - px.y, 0.0)]
 }
 
 // ---------------------------------------------------------------------------
@@ -261,8 +378,16 @@ pub struct Point<T: Float> {
 pub struct Cam<T: Float> {
     /// The camera model: 0 PINHOLE, 1 SIMPLE_PINHOLE, 2 SIMPLE_RADIAL,
     /// 3 RADIAL, 4 OPENCV, 5 FULL_OPENCV, 6 OPENCV_FISHEYE,
-    /// 7 THIN_PRISM_FISHEYE, 8 RAD_TAN_THIN_PRISM_FISHEYE.
+    /// 7 THIN_PRISM_FISHEYE, 8 RAD_TAN_THIN_PRISM_FISHEYE,
+    /// 9 SIMPLE_RADIAL_FISHEYE, 10 RADIAL_FISHEYE, 11 FOV,
+    /// 12 SIMPLE_FISHEYE, 13 FISHEYE, 14 SKEWED_PINHOLE,
+    /// 15 SIMPLE_DIVISION, 16 DIVISION, 17 EUCM, 18 EQUIRECTANGULAR.
     pub model: u32,
+    /// The test of whether the camera projects a point, which follows
+    /// from the model: 0 in front of the camera (models 0 to 14), 1 the
+    /// division models' discriminant, 2 EUCM's checks, 3 not at the
+    /// camera centre (EQUIRECTANGULAR).
+    pub check: u32,
     pub fx: Param<T>,
     /// Unused by the models with one focal length.
     pub fy: Param<T>,
@@ -291,6 +416,7 @@ pub struct Cam<T: Float> {
 #[derive(Default)]
 pub struct RigCam<T: Float> {
     pub model: u32,
+    pub check: u32,
     pub fx: Param<T>,
     pub fy: Param<T>,
     pub e0: Param<T>,
@@ -342,7 +468,7 @@ pub struct Image<T: Float> {
     parent = image, parent.parent = pose, name = "pixel",
     loss = |s| root.w * colmap_loss(root.loss, s, root.k2), {
     project(in_rig(pose.rot.rotation_matrix(), pose.tx, pose.ty, pose.tz, point.pos),
-        image.cam.model, image.cam.fx, image.cam.fy, image.cam.pp,
+        image.cam.model, image.cam.check, image.cam.fx, image.cam.fy, image.cam.pp,
         image.cam.e0, image.cam.e1, image.cam.e2, image.cam.e3, image.cam.e4, image.cam.e5,
         image.cam.e6, image.cam.e7, image.cam.e8, image.cam.e9, image.cam.e10, image.cam.e11,
         observation.px)
@@ -373,7 +499,7 @@ pub struct RigImage<T: Float> {
     loss = |s| root.w * colmap_loss(root.loss, s, root.k2), {
     let p_rig = in_rig(pose.rot.rotation_matrix(), pose.tx, pose.ty, pose.tz, point.pos);
     project(image.cam.rot.rotation_matrix() * p_rig + image.cam.t,
-        image.cam.model, image.cam.fx, image.cam.fy, image.cam.pp,
+        image.cam.model, image.cam.check, image.cam.fx, image.cam.fy, image.cam.pp,
         image.cam.e0, image.cam.e1, image.cam.e2, image.cam.e3, image.cam.e4, image.cam.e5,
         image.cam.e6, image.cam.e7, image.cam.e8, image.cam.e9, image.cam.e10, image.cam.e11,
         rigobservation.px)
@@ -406,7 +532,7 @@ pub struct FixedImage<T: Float> {
     parent = image, name = "pixel",
     loss = |s| root.w * colmap_loss(root.loss, s, root.k2), {
     project(image.r * point.pos + image.t,
-        image.cam.model, image.cam.fx, image.cam.fy, image.cam.pp,
+        image.cam.model, image.cam.check, image.cam.fx, image.cam.fy, image.cam.pp,
         image.cam.e0, image.cam.e1, image.cam.e2, image.cam.e3, image.cam.e4, image.cam.e5,
         image.cam.e6, image.cam.e7, image.cam.e8, image.cam.e9, image.cam.e10, image.cam.e11,
         fixedobservation.px)
@@ -438,7 +564,7 @@ pub struct RigFixedImage<T: Float> {
     parent = image, name = "pixel",
     loss = |s| root.w * colmap_loss(root.loss, s, root.k2), {
     project(image.r * point.pos + image.t,
-        image.cam.model, image.cam.fx, image.cam.fy, image.cam.pp,
+        image.cam.model, image.cam.check, image.cam.fx, image.cam.fy, image.cam.pp,
         image.cam.e0, image.cam.e1, image.cam.e2, image.cam.e3, image.cam.e4, image.cam.e5,
         image.cam.e6, image.cam.e7, image.cam.e8, image.cam.e9, image.cam.e10, image.cam.e11,
         rigfixedobservation.px)

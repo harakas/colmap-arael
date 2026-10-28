@@ -6,7 +6,7 @@ sparse Cholesky factorization, and the default backend of a build with
 `ARAEL_ENABLED`. It solves the incremental mapper's
 local and global bundle adjustments and the `bundle_adjuster` command
 on the same problem the Ceres backend solves: the 2-row reprojection
-residual under COLMAP's loss functions, the camera models below, rigs
+residual under COLMAP's loss functions, every COLMAP camera model, rigs
 with their sensor-from-rig poses, COLMAP's constant-parameter and
 gauge-fixing settings. A registration's pose refinement
 (`RefineAbsolutePose`) and the pose-prior bundle adjuster stay with
@@ -20,8 +20,10 @@ committed), and an adjuster over that interface
 every camera model: the camera model is data, the parameters of every
 model are fields, and a camera's Hessian blocks are stored at the size
 of its free parameters. The model reproduces the Ceres backend's cost:
-a parity test solves the same problems with both and compares the
-optima (`../bundle_adjustment_arael_test.cc`).
+the tests compare the two backends' costs on every camera model,
+including the observations a model cannot project, and solve the same
+problems with both to compare the optima
+(`../bundle_adjustment_arael_test.cc`).
 
 ## Building
 
@@ -90,11 +92,12 @@ problem size, iterations, costs, termination, threads, time.
 The reconstruction benchmark (`benchmark/reconstruction/evaluate.py`)
 takes `--ba_backend arael` and `--ba_report`.
 
-**Camera models:** SIMPLE_PINHOLE, PINHOLE, SIMPLE_RADIAL, RADIAL,
-OPENCV, FULL_OPENCV, OPENCV_FISHEYE, THIN_PRISM_FISHEYE and
-RAD_TAN_THIN_PRISM_FISHEYE. Creating an adjuster over another model
-fails with a message naming the camera; such a reconstruction runs with
-the Ceres flags above.
+**Camera models:** all of COLMAP's, EQUIRECTANGULAR included (its
+image width and height stay constant, as in the Ceres backend). An
+observation a model cannot project has a zero residual in both
+backends: for most models a point behind the camera; the division
+models project such points and fail only on a negative discriminant;
+EQUIRECTANGULAR fails only for a point at the camera centre.
 
 **Where the two backends differ.** arael's stop criterion is a
 relative cost decrease (`rel_precision`, 1e-6); the mapper runs Ceres

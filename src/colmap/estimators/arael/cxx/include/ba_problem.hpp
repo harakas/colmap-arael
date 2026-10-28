@@ -194,6 +194,8 @@ struct RigObservation;
 extern "C" {
 uint32_t ba_problem_cam_model(const Cam*);
 void ba_problem_cam_set_model(Cam*, uint32_t);
+uint32_t ba_problem_cam_check(const Cam*);
+void ba_problem_cam_set_check(Cam*, uint32_t);
 double ba_problem_cam_fx(const Cam*);
 void ba_problem_cam_set_fx(Cam*, double);
 bool ba_problem_cam_fx_optimize(const Cam*);
@@ -290,6 +292,8 @@ bool ba_problem_point_pos_optimize(const Point*);
 void ba_problem_point_pos_set_optimize(Point*, bool);
 uint32_t ba_problem_rig_cam_model(const RigCam*);
 void ba_problem_rig_cam_set_model(RigCam*, uint32_t);
+uint32_t ba_problem_rig_cam_check(const RigCam*);
+void ba_problem_rig_cam_set_check(RigCam*, uint32_t);
 double ba_problem_rig_cam_fx(const RigCam*);
 void ba_problem_rig_cam_set_fx(RigCam*, double);
 bool ba_problem_rig_cam_fx_optimize(const RigCam*);
@@ -696,6 +700,8 @@ public:
     ffi::Cam* raw() const { return h_; }
     uint32_t model() const { return ffi::ba_problem_cam_model(h_); }
     void set_model(uint32_t v) { ffi::ba_problem_cam_set_model(h_, v); }
+    uint32_t check() const { return ffi::ba_problem_cam_check(h_); }
+    void set_check(uint32_t v) { ffi::ba_problem_cam_set_check(h_, v); }
     double fx() const { return ffi::ba_problem_cam_fx(h_); }
     void set_fx(double v) { ffi::ba_problem_cam_set_fx(h_, v); }
     bool fx_optimize() const { return ffi::ba_problem_cam_fx_optimize(h_); }
@@ -1040,6 +1046,8 @@ public:
     ffi::RigCam* raw() const { return h_; }
     uint32_t model() const { return ffi::ba_problem_rig_cam_model(h_); }
     void set_model(uint32_t v) { ffi::ba_problem_rig_cam_set_model(h_, v); }
+    uint32_t check() const { return ffi::ba_problem_rig_cam_check(h_); }
+    void set_check(uint32_t v) { ffi::ba_problem_rig_cam_set_check(h_, v); }
     double fx() const { return ffi::ba_problem_rig_cam_fx(h_); }
     void set_fx(double v) { ffi::ba_problem_rig_cam_set_fx(h_, v); }
     bool fx_optimize() const { return ffi::ba_problem_rig_cam_fx_optimize(h_); }

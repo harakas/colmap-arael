@@ -3268,7 +3268,7 @@ pub unsafe extern "C" fn ba_problem_cams_try_get(p: *mut BaProblemHandle, r: u32
         None => std::ptr::null_mut(),
     }
 }
-/// Appends `n` elements built from `n` slot records of 33 u64 each (mask
+/// Appends `n` elements built from `n` slot records of 34 u64 each (mask
 /// word(s), then one slot per leaf), or `n` defaults when `slots` is null.
 /// Returns the first new element's key: its packed ref on a refs::Vec,
 /// its index on a std::vec::Vec.
@@ -3280,7 +3280,7 @@ pub unsafe extern "C" fn ba_problem_cams_push_n(p: *mut BaProblemHandle, slots: 
     for i in 0..n as usize {
         let mut e: Cam = Default::default();
         if !slots.is_null() {
-            assign_slots_cam(&mut e, slots.add(i * 33));
+            assign_slots_cam(&mut e, slots.add(i * 34));
         }
         m.push(e);
     }
@@ -3315,6 +3315,38 @@ pub unsafe extern "C" fn ba_problem_cams_get_model_n(
     for i in 0..n {
         let dst = (out as *mut u8).offset((i as i64 * stride) as isize) as *mut u32;
         std::ptr::write_unaligned(dst, m[start + i].model);
+    }
+    true
+}
+/// Sets `check` on elements `start..start + n` from values `stride` bytes
+/// apart (0 broadcasts one value); false when the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_cams_set_check_n(
+    p: *mut BaProblemHandle, start: u32, v: *const u32, n: u32, stride: i64) -> bool {
+    let m = &mut (*p).model.cams;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        let src = (v as *const u8).offset((i as i64 * stride) as isize) as *const u32;
+        m[start + i].check = std::ptr::read_unaligned(src);
+    }
+    true
+}
+/// Reads `check` of elements `start..start + n` into slots `stride` bytes
+/// apart; false when the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_cams_get_check_n(
+    p: *const BaProblemHandle, start: u32, out: *mut u32, n: u32, stride: i64) -> bool {
+    let m = &(*p).model.cams;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        let dst = (out as *mut u8).offset((i as i64 * stride) as isize) as *mut u32;
+        std::ptr::write_unaligned(dst, m[start + i].check);
     }
     true
 }
@@ -4364,7 +4396,7 @@ pub unsafe extern "C" fn ba_problem_rig_cams_try_get(p: *mut BaProblemHandle, r:
         None => std::ptr::null_mut(),
     }
 }
-/// Appends `n` elements built from `n` slot records of 42 u64 each (mask
+/// Appends `n` elements built from `n` slot records of 43 u64 each (mask
 /// word(s), then one slot per leaf), or `n` defaults when `slots` is null.
 /// Returns the first new element's key: its packed ref on a refs::Vec,
 /// its index on a std::vec::Vec.
@@ -4376,7 +4408,7 @@ pub unsafe extern "C" fn ba_problem_rig_cams_push_n(p: *mut BaProblemHandle, slo
     for i in 0..n as usize {
         let mut e: RigCam = Default::default();
         if !slots.is_null() {
-            assign_slots_rig_cam(&mut e, slots.add(i * 42));
+            assign_slots_rig_cam(&mut e, slots.add(i * 43));
         }
         m.push(e);
     }
@@ -4411,6 +4443,38 @@ pub unsafe extern "C" fn ba_problem_rig_cams_get_model_n(
     for i in 0..n {
         let dst = (out as *mut u8).offset((i as i64 * stride) as isize) as *mut u32;
         std::ptr::write_unaligned(dst, m[start + i].model);
+    }
+    true
+}
+/// Sets `check` on elements `start..start + n` from values `stride` bytes
+/// apart (0 broadcasts one value); false when the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_cams_set_check_n(
+    p: *mut BaProblemHandle, start: u32, v: *const u32, n: u32, stride: i64) -> bool {
+    let m = &mut (*p).model.rig_cams;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        let src = (v as *const u8).offset((i as i64 * stride) as isize) as *const u32;
+        m[start + i].check = std::ptr::read_unaligned(src);
+    }
+    true
+}
+/// Reads `check` of elements `start..start + n` into slots `stride` bytes
+/// apart; false when the range exceeds the collection.
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_cams_get_check_n(
+    p: *const BaProblemHandle, start: u32, out: *mut u32, n: u32, stride: i64) -> bool {
+    let m = &(*p).model.rig_cams;
+    let (start, n) = (start as usize, n as usize);
+    if start + n > m.len() {
+        return false;
+    }
+    for i in 0..n {
+        let dst = (out as *mut u8).offset((i as i64 * stride) as isize) as *mut u32;
+        std::ptr::write_unaligned(dst, m[start + i].check);
     }
     true
 }
@@ -5955,6 +6019,14 @@ pub unsafe extern "C" fn ba_problem_cam_set_model(p: *mut Cam, v: u32) {
     (*p).model = v;
 }
 #[no_mangle]
+pub unsafe extern "C" fn ba_problem_cam_check(p: *const Cam) -> u32 {
+    (*p).check
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_cam_set_check(p: *mut Cam, v: u32) {
+    (*p).check = v;
+}
+#[no_mangle]
 pub unsafe extern "C" fn ba_problem_cam_fx(p: *const Cam) -> f64 {
     (*p).fx.value
 }
@@ -6741,6 +6813,14 @@ pub unsafe extern "C" fn ba_problem_rig_cam_set_model(p: *mut RigCam, v: u32) {
     (*p).model = v;
 }
 #[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_cam_check(p: *const RigCam) -> u32 {
+    (*p).check
+}
+#[no_mangle]
+pub unsafe extern "C" fn ba_problem_rig_cam_set_check(p: *mut RigCam, v: u32) {
+    (*p).check = v;
+}
+#[no_mangle]
 pub unsafe extern "C" fn ba_problem_rig_cam_fx(p: *const RigCam) -> f64 {
     (*p).fx.value
 }
@@ -7308,101 +7388,104 @@ pub unsafe extern "C" fn ba_problem_rig_observation_set_px(p: *mut RigObservatio
 }
 
 /// Assigns a slot record's masked leaves onto a `Cam`: 1 mask
-/// word(s), then 32 slot(s), one per leaf in field order.
+/// word(s), then 33 slot(s), one per leaf in field order.
 #[allow(dead_code)]
 unsafe fn assign_slots_cam(e: &mut Cam, s: *const u64) {
     if *s.add(0) & (1u64 << 0) != 0 {
         e.model = *s.add(1) as u32;
     }
     if *s.add(0) & (1u64 << 1) != 0 {
-        e.fx.value = f64::from_bits(*s.add(2));
+        e.check = *s.add(2) as u32;
     }
     if *s.add(0) & (1u64 << 2) != 0 {
-        e.fx.optimize = *s.add(3) != 0;
+        e.fx.value = f64::from_bits(*s.add(3));
     }
     if *s.add(0) & (1u64 << 3) != 0 {
-        e.fy.value = f64::from_bits(*s.add(4));
+        e.fx.optimize = *s.add(4) != 0;
     }
     if *s.add(0) & (1u64 << 4) != 0 {
-        e.fy.optimize = *s.add(5) != 0;
+        e.fy.value = f64::from_bits(*s.add(5));
     }
     if *s.add(0) & (1u64 << 5) != 0 {
-        e.e0.value = f64::from_bits(*s.add(6));
+        e.fy.optimize = *s.add(6) != 0;
     }
     if *s.add(0) & (1u64 << 6) != 0 {
-        e.e0.optimize = *s.add(7) != 0;
+        e.e0.value = f64::from_bits(*s.add(7));
     }
     if *s.add(0) & (1u64 << 7) != 0 {
-        e.e1.value = f64::from_bits(*s.add(8));
+        e.e0.optimize = *s.add(8) != 0;
     }
     if *s.add(0) & (1u64 << 8) != 0 {
-        e.e1.optimize = *s.add(9) != 0;
+        e.e1.value = f64::from_bits(*s.add(9));
     }
     if *s.add(0) & (1u64 << 9) != 0 {
-        e.e2.value = f64::from_bits(*s.add(10));
+        e.e1.optimize = *s.add(10) != 0;
     }
     if *s.add(0) & (1u64 << 10) != 0 {
-        e.e2.optimize = *s.add(11) != 0;
+        e.e2.value = f64::from_bits(*s.add(11));
     }
     if *s.add(0) & (1u64 << 11) != 0 {
-        e.e3.value = f64::from_bits(*s.add(12));
+        e.e2.optimize = *s.add(12) != 0;
     }
     if *s.add(0) & (1u64 << 12) != 0 {
-        e.e3.optimize = *s.add(13) != 0;
+        e.e3.value = f64::from_bits(*s.add(13));
     }
     if *s.add(0) & (1u64 << 13) != 0 {
-        e.e4.value = f64::from_bits(*s.add(14));
+        e.e3.optimize = *s.add(14) != 0;
     }
     if *s.add(0) & (1u64 << 14) != 0 {
-        e.e4.optimize = *s.add(15) != 0;
+        e.e4.value = f64::from_bits(*s.add(15));
     }
     if *s.add(0) & (1u64 << 15) != 0 {
-        e.e5.value = f64::from_bits(*s.add(16));
+        e.e4.optimize = *s.add(16) != 0;
     }
     if *s.add(0) & (1u64 << 16) != 0 {
-        e.e5.optimize = *s.add(17) != 0;
+        e.e5.value = f64::from_bits(*s.add(17));
     }
     if *s.add(0) & (1u64 << 17) != 0 {
-        e.e6.value = f64::from_bits(*s.add(18));
+        e.e5.optimize = *s.add(18) != 0;
     }
     if *s.add(0) & (1u64 << 18) != 0 {
-        e.e6.optimize = *s.add(19) != 0;
+        e.e6.value = f64::from_bits(*s.add(19));
     }
     if *s.add(0) & (1u64 << 19) != 0 {
-        e.e7.value = f64::from_bits(*s.add(20));
+        e.e6.optimize = *s.add(20) != 0;
     }
     if *s.add(0) & (1u64 << 20) != 0 {
-        e.e7.optimize = *s.add(21) != 0;
+        e.e7.value = f64::from_bits(*s.add(21));
     }
     if *s.add(0) & (1u64 << 21) != 0 {
-        e.e8.value = f64::from_bits(*s.add(22));
+        e.e7.optimize = *s.add(22) != 0;
     }
     if *s.add(0) & (1u64 << 22) != 0 {
-        e.e8.optimize = *s.add(23) != 0;
+        e.e8.value = f64::from_bits(*s.add(23));
     }
     if *s.add(0) & (1u64 << 23) != 0 {
-        e.e9.value = f64::from_bits(*s.add(24));
+        e.e8.optimize = *s.add(24) != 0;
     }
     if *s.add(0) & (1u64 << 24) != 0 {
-        e.e9.optimize = *s.add(25) != 0;
+        e.e9.value = f64::from_bits(*s.add(25));
     }
     if *s.add(0) & (1u64 << 25) != 0 {
-        e.e10.value = f64::from_bits(*s.add(26));
+        e.e9.optimize = *s.add(26) != 0;
     }
     if *s.add(0) & (1u64 << 26) != 0 {
-        e.e10.optimize = *s.add(27) != 0;
+        e.e10.value = f64::from_bits(*s.add(27));
     }
     if *s.add(0) & (1u64 << 27) != 0 {
-        e.e11.value = f64::from_bits(*s.add(28));
+        e.e10.optimize = *s.add(28) != 0;
     }
     if *s.add(0) & (1u64 << 28) != 0 {
-        e.e11.optimize = *s.add(29) != 0;
+        e.e11.value = f64::from_bits(*s.add(29));
     }
     if *s.add(0) & (1u64 << 29) != 0 {
-        e.pp.value = std::mem::transmute::<[f64; 2], CVec2F64>([f64::from_bits(*s.add(30)), f64::from_bits(*s.add(31))]).into();
+        e.e11.optimize = *s.add(30) != 0;
     }
     if *s.add(0) & (1u64 << 30) != 0 {
-        e.pp.optimize = *s.add(32) != 0;
+        e.pp.value = std::mem::transmute::<[f64; 2], CVec2F64>([f64::from_bits(*s.add(31)), f64::from_bits(*s.add(32))]).into();
+    }
+    if *s.add(0) & (1u64 << 31) != 0 {
+        e.pp.optimize = *s.add(33) != 0;
     }
 }
 
@@ -7497,113 +7580,116 @@ unsafe fn assign_slots_pose(e: &mut Pose, s: *const u64) {
 }
 
 /// Assigns a slot record's masked leaves onto a `RigCam`: 1 mask
-/// word(s), then 41 slot(s), one per leaf in field order.
+/// word(s), then 42 slot(s), one per leaf in field order.
 #[allow(dead_code)]
 unsafe fn assign_slots_rig_cam(e: &mut RigCam, s: *const u64) {
     if *s.add(0) & (1u64 << 0) != 0 {
         e.model = *s.add(1) as u32;
     }
     if *s.add(0) & (1u64 << 1) != 0 {
-        e.fx.value = f64::from_bits(*s.add(2));
+        e.check = *s.add(2) as u32;
     }
     if *s.add(0) & (1u64 << 2) != 0 {
-        e.fx.optimize = *s.add(3) != 0;
+        e.fx.value = f64::from_bits(*s.add(3));
     }
     if *s.add(0) & (1u64 << 3) != 0 {
-        e.fy.value = f64::from_bits(*s.add(4));
+        e.fx.optimize = *s.add(4) != 0;
     }
     if *s.add(0) & (1u64 << 4) != 0 {
-        e.fy.optimize = *s.add(5) != 0;
+        e.fy.value = f64::from_bits(*s.add(5));
     }
     if *s.add(0) & (1u64 << 5) != 0 {
-        e.e0.value = f64::from_bits(*s.add(6));
+        e.fy.optimize = *s.add(6) != 0;
     }
     if *s.add(0) & (1u64 << 6) != 0 {
-        e.e0.optimize = *s.add(7) != 0;
+        e.e0.value = f64::from_bits(*s.add(7));
     }
     if *s.add(0) & (1u64 << 7) != 0 {
-        e.e1.value = f64::from_bits(*s.add(8));
+        e.e0.optimize = *s.add(8) != 0;
     }
     if *s.add(0) & (1u64 << 8) != 0 {
-        e.e1.optimize = *s.add(9) != 0;
+        e.e1.value = f64::from_bits(*s.add(9));
     }
     if *s.add(0) & (1u64 << 9) != 0 {
-        e.e2.value = f64::from_bits(*s.add(10));
+        e.e1.optimize = *s.add(10) != 0;
     }
     if *s.add(0) & (1u64 << 10) != 0 {
-        e.e2.optimize = *s.add(11) != 0;
+        e.e2.value = f64::from_bits(*s.add(11));
     }
     if *s.add(0) & (1u64 << 11) != 0 {
-        e.e3.value = f64::from_bits(*s.add(12));
+        e.e2.optimize = *s.add(12) != 0;
     }
     if *s.add(0) & (1u64 << 12) != 0 {
-        e.e3.optimize = *s.add(13) != 0;
+        e.e3.value = f64::from_bits(*s.add(13));
     }
     if *s.add(0) & (1u64 << 13) != 0 {
-        e.e4.value = f64::from_bits(*s.add(14));
+        e.e3.optimize = *s.add(14) != 0;
     }
     if *s.add(0) & (1u64 << 14) != 0 {
-        e.e4.optimize = *s.add(15) != 0;
+        e.e4.value = f64::from_bits(*s.add(15));
     }
     if *s.add(0) & (1u64 << 15) != 0 {
-        e.e5.value = f64::from_bits(*s.add(16));
+        e.e4.optimize = *s.add(16) != 0;
     }
     if *s.add(0) & (1u64 << 16) != 0 {
-        e.e5.optimize = *s.add(17) != 0;
+        e.e5.value = f64::from_bits(*s.add(17));
     }
     if *s.add(0) & (1u64 << 17) != 0 {
-        e.e6.value = f64::from_bits(*s.add(18));
+        e.e5.optimize = *s.add(18) != 0;
     }
     if *s.add(0) & (1u64 << 18) != 0 {
-        e.e6.optimize = *s.add(19) != 0;
+        e.e6.value = f64::from_bits(*s.add(19));
     }
     if *s.add(0) & (1u64 << 19) != 0 {
-        e.e7.value = f64::from_bits(*s.add(20));
+        e.e6.optimize = *s.add(20) != 0;
     }
     if *s.add(0) & (1u64 << 20) != 0 {
-        e.e7.optimize = *s.add(21) != 0;
+        e.e7.value = f64::from_bits(*s.add(21));
     }
     if *s.add(0) & (1u64 << 21) != 0 {
-        e.e8.value = f64::from_bits(*s.add(22));
+        e.e7.optimize = *s.add(22) != 0;
     }
     if *s.add(0) & (1u64 << 22) != 0 {
-        e.e8.optimize = *s.add(23) != 0;
+        e.e8.value = f64::from_bits(*s.add(23));
     }
     if *s.add(0) & (1u64 << 23) != 0 {
-        e.e9.value = f64::from_bits(*s.add(24));
+        e.e8.optimize = *s.add(24) != 0;
     }
     if *s.add(0) & (1u64 << 24) != 0 {
-        e.e9.optimize = *s.add(25) != 0;
+        e.e9.value = f64::from_bits(*s.add(25));
     }
     if *s.add(0) & (1u64 << 25) != 0 {
-        e.e10.value = f64::from_bits(*s.add(26));
+        e.e9.optimize = *s.add(26) != 0;
     }
     if *s.add(0) & (1u64 << 26) != 0 {
-        e.e10.optimize = *s.add(27) != 0;
+        e.e10.value = f64::from_bits(*s.add(27));
     }
     if *s.add(0) & (1u64 << 27) != 0 {
-        e.e11.value = f64::from_bits(*s.add(28));
+        e.e10.optimize = *s.add(28) != 0;
     }
     if *s.add(0) & (1u64 << 28) != 0 {
-        e.e11.optimize = *s.add(29) != 0;
+        e.e11.value = f64::from_bits(*s.add(29));
     }
     if *s.add(0) & (1u64 << 29) != 0 {
-        e.pp.value = std::mem::transmute::<[f64; 2], CVec2F64>([f64::from_bits(*s.add(30)), f64::from_bits(*s.add(31))]).into();
+        e.e11.optimize = *s.add(30) != 0;
     }
     if *s.add(0) & (1u64 << 30) != 0 {
-        e.pp.optimize = *s.add(32) != 0;
+        e.pp.value = std::mem::transmute::<[f64; 2], CVec2F64>([f64::from_bits(*s.add(31)), f64::from_bits(*s.add(32))]).into();
     }
     if *s.add(0) & (1u64 << 31) != 0 {
-        e.rot.value = std::mem::transmute::<[f64; 4], CQuatF64>([f64::from_bits(*s.add(33)), f64::from_bits(*s.add(34)), f64::from_bits(*s.add(35)), f64::from_bits(*s.add(36))]).into();
+        e.pp.optimize = *s.add(33) != 0;
     }
     if *s.add(0) & (1u64 << 32) != 0 {
-        e.rot.optimize = *s.add(37) != 0;
+        e.rot.value = std::mem::transmute::<[f64; 4], CQuatF64>([f64::from_bits(*s.add(34)), f64::from_bits(*s.add(35)), f64::from_bits(*s.add(36)), f64::from_bits(*s.add(37))]).into();
     }
     if *s.add(0) & (1u64 << 33) != 0 {
-        e.t.value = std::mem::transmute::<[f64; 3], CVec3F64>([f64::from_bits(*s.add(38)), f64::from_bits(*s.add(39)), f64::from_bits(*s.add(40))]).into();
+        e.rot.optimize = *s.add(38) != 0;
     }
     if *s.add(0) & (1u64 << 34) != 0 {
-        e.t.optimize = *s.add(41) != 0;
+        e.t.value = std::mem::transmute::<[f64; 3], CVec3F64>([f64::from_bits(*s.add(39)), f64::from_bits(*s.add(40)), f64::from_bits(*s.add(41))]).into();
+    }
+    if *s.add(0) & (1u64 << 35) != 0 {
+        e.t.optimize = *s.add(42) != 0;
     }
 }
 

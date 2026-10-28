@@ -11,6 +11,7 @@
 #include "colmap/util/testing.h"
 
 #include <fstream>
+#include <optional>
 
 #include <gtest/gtest.h>
 
@@ -840,27 +841,38 @@ TEST(AraelBundleAdjuster, ConstantParametersKeepTheirValues) {
   }
 }
 
-TEST(AraelBundleAdjuster, UnsupportedCameraModel) {
-  Reconstruction reconstruction;
-  SyntheticDatasetOptions synthetic_dataset_options;
-  synthetic_dataset_options.num_rigs = 3;
-  synthetic_dataset_options.num_cameras_per_rig = 1;
-  synthetic_dataset_options.num_frames_per_rig = 1;
-  synthetic_dataset_options.num_points3D = 100;
-  synthetic_dataset_options.camera_model_id =
-      EquirectangularCameraModel::model_id;
-  synthetic_dataset_options.camera_width = 1000;
-  synthetic_dataset_options.camera_height = 500;
-  synthetic_dataset_options.camera_params = {1000, 500};
-  SynthesizeDataset(synthetic_dataset_options, &reconstruction);
+// Every COLMAP camera model builds an adjuster; a model added upstream
+// later fails here until the backend has it.
+TEST(AraelBundleAdjuster, SupportsEveryCameraModel) {
+  int num_models = 0;
+  for (int id = 0; ExistsCameraModelWithId(static_cast<CameraModelId>(id));
+       ++id) {
+    const CameraModelId model_id = static_cast<CameraModelId>(id);
+    SCOPED_TRACE(CameraModelIdToName(model_id));
+    ++num_models;
+    Reconstruction reconstruction;
+    SyntheticDatasetOptions synthetic_dataset_options;
+    synthetic_dataset_options.num_rigs = 3;
+    synthetic_dataset_options.num_cameras_per_rig = 1;
+    synthetic_dataset_options.num_frames_per_rig = 1;
+    synthetic_dataset_options.num_points3D = 100;
+    synthetic_dataset_options.camera_model_id = model_id;
+    synthetic_dataset_options.camera_params =
+        CameraModelInitializeParams(model_id,
+                                    /*focal_length=*/1000,
+                                    synthetic_dataset_options.camera_width,
+                                    synthetic_dataset_options.camera_height);
+    SynthesizeDataset(synthetic_dataset_options, &reconstruction);
 
-  BundleAdjustmentConfig config;
-  config.AddImage(1);
-  config.AddImage(2);
-  config.AddImage(3);
+    BundleAdjustmentConfig config;
+    config.AddImage(1);
+    config.AddImage(2);
+    config.AddImage(3);
 
-  EXPECT_ANY_THROW(CreateDefaultAraelBundleAdjuster(
-      BundleAdjustmentOptions(), config, reconstruction));
+    EXPECT_NO_THROW(CreateDefaultAraelBundleAdjuster(
+        BundleAdjustmentOptions(), config, reconstruction));
+  }
+  EXPECT_EQ(num_models, 19);
 }
 
 TEST(AraelBundleAdjuster, SolveRecord) {
@@ -1175,6 +1187,86 @@ TEST(AraelBundleAdjuster, MatchesCeresOptimum) {
                     -0.0005,
                     0.0003,
                     -0.0003}});
+  cases.push_back({"simple_radial_fisheye",
+                   1,
+                   1,
+                   4,
+                   SimpleRadialFisheyeCameraModel::model_id,
+                   {600, 512, 384, -0.02}});
+  cases.push_back({"radial_fisheye",
+                   1,
+                   1,
+                   4,
+                   RadialFisheyeCameraModel::model_id,
+                   {600, 512, 384, -0.02, 0.005}});
+  cases.push_back({"radial_fisheye/rig",
+                   1,
+                   2,
+                   4,
+                   RadialFisheyeCameraModel::model_id,
+                   {600, 512, 384, -0.02, 0.005}});
+  cases.push_back(
+      {"fov", 1, 1, 4, FOVCameraModel::model_id, {600, 610, 512, 384, 0.8}});
+  // Below omega^2 = 1e-4 the model takes its series in omega; omega is
+  // held so the solve stays there.
+  cases.push_back({"fov/small_omega",
+                   1,
+                   1,
+                   4,
+                   FOVCameraModel::model_id,
+                   {1000, 1010, 512, 384, 0.005},
+                   BundleAdjustmentGauge::TWO_CAMS_FROM_WORLD,
+                   CeresLossFunctionType::TRIVIAL,
+                   1.0,
+                   0,
+                   /*refine_extra_params=*/false});
+  cases.push_back({"simple_fisheye",
+                   1,
+                   1,
+                   4,
+                   SimpleFisheyeCameraModel::model_id,
+                   {600, 512, 384}});
+  cases.push_back(
+      {"fisheye", 1, 1, 4, FisheyeCameraModel::model_id, {600, 610, 512, 384}});
+  cases.push_back({"skewed_pinhole",
+                   1,
+                   1,
+                   4,
+                   SkewedPinholeCameraModel::model_id,
+                   {1000, 1010, 512, 384, 2.0}});
+  cases.push_back({"simple_division",
+                   1,
+                   1,
+                   4,
+                   SimpleDivisionCameraModel::model_id,
+                   {1000, 512, 384, -0.1}});
+  cases.push_back({"division",
+                   1,
+                   1,
+                   4,
+                   DivisionCameraModel::model_id,
+                   {1000, 1010, 512, 384, 0.05}});
+  // EUCM's alpha and beta, with the focal length, leave a nearly flat
+  // valley: Ceres is still descending it at 500 iterations. They stay
+  // constant, as the rational model's terms do above.
+  cases.push_back({"eucm",
+                   1,
+                   1,
+                   4,
+                   EUCMCameraModel::model_id,
+                   {600, 610, 512, 384, 0.6, 1.1},
+                   BundleAdjustmentGauge::TWO_CAMS_FROM_WORLD,
+                   CeresLossFunctionType::TRIVIAL,
+                   1.0,
+                   0,
+                   /*refine_extra_params=*/false});
+  // No intrinsics to refine: the image width and height are fixed.
+  cases.push_back({"equirectangular",
+                   1,
+                   1,
+                   4,
+                   EquirectangularCameraModel::model_id,
+                   {1024, 768}});
 
   for (const OptimumCase& c : cases) {
     SCOPED_TRACE(c.name);
@@ -1283,6 +1375,218 @@ TEST(AraelBundleAdjuster, MatchesCeresOptimum) {
                                    /*max_proj_center_error=*/1e-2,
                                    /*max_scale_error=*/std::nullopt,
                                    /*num_obs_tolerance=*/0.0));
+  }
+}
+
+// A point moved to `in_cam` in the camera frame of the first image of
+// its track; with `observed_x` set, that image's observation of it moves
+// to that column.
+struct PlacedPoint {
+  Eigen::Vector3d in_cam;
+  std::optional<double> observed_x;
+};
+
+struct ResidualCase {
+  std::string name;
+  CameraModelId camera_model_id;
+  std::vector<double> camera_params;
+  std::vector<PlacedPoint> placed;
+};
+
+// arael's cost equals the Ceres backend's on the same noisy problem, for
+// every camera model, with points where the model's projection fails
+// (a zero residual in both) or behaves at its edges: behind the camera,
+// a negative division discriminant, EUCM's checks, FOV's series near
+// omega = 0 and near the optical axis, the equirectangular seam.
+TEST(AraelBundleAdjuster, ResidualsMatchCeres) {
+  const std::vector<PlacedPoint> behind = {{{0.1, 0.1, -1.0}}};
+  const std::vector<ResidualCase> cases = {
+      {"pinhole", PinholeCameraModel::model_id, {1000, 1010, 512, 384}, behind},
+      {"simple_pinhole",
+       SimplePinholeCameraModel::model_id,
+       {1000, 512, 384},
+       behind},
+      {"simple_radial",
+       SimpleRadialCameraModel::model_id,
+       {1000, 512, 384, -0.1},
+       behind},
+      {"radial",
+       RadialCameraModel::model_id,
+       {1000, 512, 384, -0.1, 0.02},
+       behind},
+      {"opencv",
+       OpenCVCameraModel::model_id,
+       {1000, 1010, 512, 384, -0.1, 0.02, 0.001, -0.002},
+       behind},
+      {"full_opencv",
+       FullOpenCVCameraModel::model_id,
+       {1000,
+        1010,
+        512,
+        384,
+        -0.1,
+        0.02,
+        0.001,
+        -0.002,
+        0.005,
+        -0.05,
+        0.01,
+        0.002},
+       behind},
+      {"opencv_fisheye",
+       OpenCVFisheyeCameraModel::model_id,
+       {600, 610, 512, 384, -0.02, 0.005, -0.001, 0.0005},
+       behind},
+      {"thin_prism_fisheye",
+       ThinPrismFisheyeCameraModel::model_id,
+       {600,
+        610,
+        512,
+        384,
+        -0.02,
+        0.005,
+        0.001,
+        -0.001,
+        -0.001,
+        0.0005,
+        0.0005,
+        -0.0005},
+       behind},
+      {"rad_tan_thin_prism_fisheye",
+       RadTanThinPrismFisheyeModel::model_id,
+       {600,
+        610,
+        512,
+        384,
+        -0.02,
+        0.005,
+        -0.001,
+        0.0005,
+        0.0001,
+        -0.0001,
+        0.001,
+        -0.001,
+        0.0005,
+        -0.0005,
+        0.0003,
+        -0.0003},
+       behind},
+      {"simple_radial_fisheye",
+       SimpleRadialFisheyeCameraModel::model_id,
+       {600, 512, 384, -0.02},
+       behind},
+      {"radial_fisheye",
+       RadialFisheyeCameraModel::model_id,
+       {600, 512, 384, -0.02, 0.005},
+       behind},
+      {"fov", FOVCameraModel::model_id, {600, 610, 512, 384, 0.8}, behind},
+      // Within 1e-2 of the optical axis: the series in the radius.
+      {"fov/near_axis",
+       FOVCameraModel::model_id,
+       {600, 610, 512, 384, 0.8},
+       {{{1e-3, 1e-3, 2.0}}}},
+      // omega^2 below 1e-4: the series in omega.
+      {"fov/small_omega",
+       FOVCameraModel::model_id,
+       {1000, 1010, 512, 384, 0.005},
+       behind},
+      {"simple_fisheye",
+       SimpleFisheyeCameraModel::model_id,
+       {600, 512, 384},
+       behind},
+      {"fisheye", FisheyeCameraModel::model_id, {600, 610, 512, 384}, behind},
+      {"skewed_pinhole",
+       SkewedPinholeCameraModel::model_id,
+       {1000, 1010, 512, 384, 2.0},
+       behind},
+      {"simple_division",
+       SimpleDivisionCameraModel::model_id,
+       {1000, 512, 384, 0.1},
+       {}},
+      // Far off the axis: w^2 - 4 k (u^2 + v^2) < 0.
+      {"simple_division/negative_discriminant",
+       SimpleDivisionCameraModel::model_id,
+       {1000, 512, 384, 0.1},
+       {{{2.0, 1.0, 1.0}}}},
+      // The division models check no depth: a point behind the camera
+      // projects, far outside the image.
+      {"division/behind",
+       DivisionCameraModel::model_id,
+       {1000, 1010, 512, 384, -0.1},
+       {{{0.3, 0.2, -2.0}}}},
+      {"eucm",
+       EUCMCameraModel::model_id,
+       {600, 610, 512, 384, 0.6, 1.1},
+       behind},
+      // A negative beta, far off the axis: beta (u^2 + v^2) + w^2 < 0.
+      {"eucm/negative_radicand",
+       EUCMCameraModel::model_id,
+       {600, 610, 512, 384, 0.6, -0.5},
+       {{{2.0, 1.0, 1.0}}}},
+      // Behind the camera, near the seam at longitude pi: the projection
+      // lands at the right edge and the observation at the left, so the
+      // residual wraps across the seam.
+      {"equirectangular",
+       EquirectangularCameraModel::model_id,
+       {1024, 768},
+       {{{0.5, 0.1, -2.0}}, {{1e-3, 0.1, -2.0}, 0.5}}},
+  };
+
+  for (const ResidualCase& c : cases) {
+    SCOPED_TRACE(c.name);
+    SetPRNGSeed();
+
+    Reconstruction reconstruction;
+    SyntheticDatasetOptions synthetic_dataset_options;
+    synthetic_dataset_options.num_rigs = 1;
+    synthetic_dataset_options.num_cameras_per_rig = 1;
+    synthetic_dataset_options.num_frames_per_rig = 4;
+    synthetic_dataset_options.num_points3D = 100;
+    synthetic_dataset_options.camera_model_id = c.camera_model_id;
+    synthetic_dataset_options.camera_width = 1024;
+    synthetic_dataset_options.camera_height = 768;
+    synthetic_dataset_options.camera_params = c.camera_params;
+    SynthesizeDataset(synthetic_dataset_options, &reconstruction);
+    SyntheticNoiseOptions synthetic_noise_options;
+    synthetic_noise_options.point2D_stddev = 1.0;
+    synthetic_noise_options.point3D_stddev = 0.1;
+    synthetic_noise_options.rig_from_world_rotation_stddev = 0.5;
+    synthetic_noise_options.rig_from_world_translation_stddev = 0.1;
+    SynthesizeNoise(synthetic_noise_options, &reconstruction);
+
+    std::vector<point3D_t> point3D_ids;
+    for (const auto& [point3D_id, point3D] : reconstruction.Points3D()) {
+      point3D_ids.push_back(point3D_id);
+    }
+    std::sort(point3D_ids.begin(), point3D_ids.end());
+    ASSERT_LE(c.placed.size(), point3D_ids.size());
+    for (size_t i = 0; i < c.placed.size(); ++i) {
+      Point3D& point3D = reconstruction.Point3D(point3D_ids[i]);
+      const TrackElement& element = point3D.track.Elements().front();
+      Image& image = reconstruction.Image(element.image_id);
+      point3D.xyz = Inverse(image.CamFromWorld()) * c.placed[i].in_cam;
+      if (c.placed[i].observed_x) {
+        image.Point2D(element.point2D_idx).xy.x() = *c.placed[i].observed_x;
+      }
+    }
+
+    BundleAdjustmentConfig config;
+    for (const image_t image_id : reconstruction.RegImageIds()) {
+      config.AddImage(image_id);
+    }
+    config.FixGauge(BundleAdjustmentGauge::TWO_CAMS_FROM_WORLD);
+
+    BundleAdjustmentOptions options;
+    options.print_summary = false;
+    options.arael->max_num_iterations = 1;
+    const double ceres_cost = CeresCost(options, config, reconstruction);
+    ASSERT_TRUE(std::isfinite(ceres_cost));
+
+    Reconstruction arael_reconstruction = reconstruction;
+    const auto summary = SolveArael(options, config, arael_reconstruction);
+    EXPECT_NEAR(GetAraelSummary(summary.get()).initial_cost,
+                ceres_cost,
+                1e-9 * ceres_cost);
   }
 }
 
