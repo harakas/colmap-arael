@@ -113,8 +113,9 @@ on one thread below its residual threshold.
 ## Benchmark
 
 Two tables with different claims: the solver table times both
-backends on the same bundle adjustment problems; the pipeline table
-runs the mapper end to end with each backend as shipped.
+backends on the same bundle adjustment problems, and a second run of
+it adds COLMAP's GPU backend, caspar; the pipeline table runs the
+mapper end to end with each backend as shipped.
 
 **Setup.** One machine: AMD Ryzen 9 7950X3D (16 cores), 93 GB, Linux
 6.8; an Ubuntu 24.04 container with COLMAP upstream `fa089062` and
@@ -198,6 +199,63 @@ convergence in seconds:
 | imc2023/phototourism/sagrada_familia | 90 | 599745 | 2.87 | 3.62 | 0.43 | 0.95 |
 | imc2023/phototourism/british_museum | 170 | 750309 | 4.67 | 6.26 | 0.69 | 1.52 |
 | tartanair-v2-perspective/infrastructure/Hospital-hard-P000 | 50 | 99627 | 0.60 | 1.36 | 0.07 | 0.13 |
+
+### Solver table on the GPU: caspar
+
+caspar is COLMAP's bundle adjustment on an NVIDIA GPU
+(`CASPAR_ENABLED`). This run adds it to the solver table's columns on
+the same machine's GPU, an NVIDIA GeForce RTX 4090 (driver 575.64.03,
+CUDA 12.9).
+
+caspar runs in single precision, its default (column `caspar`), and in
+double precision (`CASPAR_USE_DOUBLE`, column `caspar-f64`), on 57
+problems picked as for the solver table from its ETH3D, IMC and
+BlendedMVS scenes.
+
+**Time to one target.** caspar stops at a higher cost than the other
+columns. Relative to the lowest cost any column reached on a problem,
+caspar's converged cost is higher by a median of 4e-5 (at most 1.4e-2)
+in single precision and 3e-8 (at most 8e-3) in double precision; Ceres
+and arael are within 7e-7. Timing each column to its own converged
+cost, as the solver table does, would credit caspar for stopping
+early. Here every column is timed to one target per problem, that
+lowest cost plus a relative tolerance, at the fewest iterations that
+reach it: the median of the five timed rounds where those rounds meet
+the target, otherwise the single solve at that iteration count from the
+search for it. A cost 1e-4 higher in relative terms is a reprojection
+RMS 5e-5 higher.
+
+Problems that reach the target, of 57:
+
+| tolerance | ceres, ceres-1, arael, arael-1 | caspar | caspar-f64 |
+|---|---|---|---|
+| 1e-5 | 57 | 16 | 47 |
+| 1e-4 | 57 | 36 | 54 |
+| 1e-3 | 57 | 54 | 56 |
+
+Time over the problems every column reaches [s]:
+
+| tolerance | problems | ceres | ceres-1 | arael | arael-1 | caspar | caspar-f64 |
+|---|---|---|---|---|---|---|---|
+| 1e-5 | 16 | 21.5 | 26.8 | 3.33 | 7.29 | 1.66 | 2.61 |
+| 1e-4 | 36 | 41.7 | 50.8 | 6.98 | 13.7 | 3.59 | 6.10 |
+| 1e-3 | 54 | 45.5 | 55.1 | 8.05 | 15.4 | 3.30 | 4.00 |
+
+Seven of the problems, the time to a tolerance of 1e-5 in seconds, and
+caspar's to 1e-4 in the last column ("-": not reached within the cap
+of 1000 iterations). On these problems Ceres and arael reach the target
+in one to six iterations; caspar in 4 to 18 on the large ones and in
+over a hundred, or not at all, on the small ones.
+
+| problem | observations | ceres | arael | caspar | caspar-f64 | caspar, 1e-4 |
+|---|---|---|---|---|---|---|
+| blended-mvs/BlendedMVS/5bb8a49aea1cfa39f1aa7f75, late | 1098526 | 4.97 | 0.91 | - | 0.86 | 0.26 |
+| eth3d/rig/terrains, late | 798249 | 2.97 | 0.44 | 0.11 | 0.22 | 0.10 |
+| imc2023/phototourism/british_museum, late | 724971 | 4.57 | 0.67 | - | 0.46 | 0.14 |
+| imc2023/phototourism/lincoln_memorial_statue, late | 528472 | 4.29 | 0.56 | 0.08 | 0.17 | 0.07 |
+| eth3d/dslr/courtyard, early | 57275 | 0.17 | 0.03 | - | 0.96 | 0.23 |
+| imc2024/all/church, early | 40871 | 0.14 | 0.03 | - | 6.78 | - |
+| imc2023/heritage/cyprus, early | 15459 | 0.06 | 0.01 | - | - | - |
 
 ### Pipeline table: as shipped
 
